@@ -56,6 +56,7 @@ OPTIONS:
   --reads-root <DIR>  Override read root directory (useful for simulated reads)
   --isolate <ID>      Run only a single isolate (must be present in linelist)
   --partition <p>     SLURM partition (default: standard)
+  --ref-fasta <p>     Fasta to us (default: repo_dir/references/ATCC19977.fasta)
   -h, --help          Show this help and exit
 EOF
 }
@@ -80,6 +81,7 @@ ACCOUNT="amr_services_paid"
 PARTITION="standard"
 ONLY_ISOLATE=""
 READS_ROOT=""
+REF_FASTA_OVERRIDE=""
 
 shift 3
 while [[ $# -gt 0 ]]; do
@@ -97,6 +99,11 @@ while [[ $# -gt 0 ]]; do
     --reads-root)
       READS_ROOT="${2:-}"
       [[ -z "$READS_ROOT" ]] && { echo "ERROR: --reads-root requires a value" >&2; exit 1; }
+      shift 2
+      ;;
+    --ref-fasta)
+      REF_FASTA_OVERRIDE="${2:-}"
+      [[ -z "$REF_FASTA_OVERRIDE" ]] && { echo "ERROR: --ref-fasta requires a value" >&2; exit 1; }
       shift 2
       ;;
     -h|--help)
@@ -143,7 +150,11 @@ for f in "$STEP1_SCRIPT" "$STEP2_SCRIPT" "$STEP3_SCRIPT" "$TARGETS_FASTA"; do
 done
 
 # Reference ALWAYS from workdir/references
-REF_FASTA="${WORKDIR%/}/references/ATCC19977.fasta"
+if [[ -n "$REF_FASTA_OVERRIDE" ]]; then
+  REF_FASTA="$(cd "$(dirname "$REF_FASTA_OVERRIDE")" && pwd)/$(basename "$REF_FASTA_OVERRIDE")"
+else
+  REF_FASTA="$REF_DIR/ATCC19977.fasta"
+fi
 [[ -s "$REF_FASTA" ]] || { echo "ERROR: Reference FASTA not found: $REF_FASTA" >&2; exit 1; }
 
 # ------------------------------------------------------------

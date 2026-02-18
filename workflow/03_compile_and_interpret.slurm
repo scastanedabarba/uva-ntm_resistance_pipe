@@ -50,4 +50,4 @@ python3 "$PY_SCRIPT" \
 
 python3 "$PY_SCRIPT2" \
   --outdir "$OUTDIR" \
-  --ref-fasta "${WORKDIR%/}/references/ATCC19977.fasta"
+  --ref-fasta "${REPO_ROOT%/}/references/ATCC19977.fasta"

@@ -53,7 +53,9 @@ done
 
 [[ -z "$WORKDIR" ]] && { echo "ERROR: --workdir required" >&2; exit 1; }
 
-REF="${WORKDIR%/}/references/ATCC19977.fasta"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REF_DEFAULT="$REPO_ROOT/references/ATCC19977.fasta"
+REF="${REF_FASTA:-$REF_DEFAULT}"
 OUTDIR="${WORKDIR%/}/atcc_dataset"
 
 [[ -f "$REF" ]] || { echo "ERROR: Reference FASTA not found: $REF" >&2; exit 1; }

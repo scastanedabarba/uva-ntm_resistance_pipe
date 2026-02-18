@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # ------------------------------------------------------------
-# step2_map_call.slurm
+# 02_map_call.slurm
 #
 # Step 2 (per isolate):
 #   2a) Map PE reads to ATCC 19977 reference (bwa mem)
@@ -41,8 +41,7 @@ module load bcftools
 # ---------------------------
 # Reference
 # ---------------------------
-# Controller should export REF_FASTA=<workdir>/references/ATCC19977.fasta
-REF_FASTA="${REF_FASTA:-${PIPE_OUTDIR}/scripts/ATCC19977.fasta}"
+: "${REF_FASTA:?ERROR: REF_FASTA env var not set (export from controller)}"
 
 # ---------------------------
 # Target gene coordinates (ATCC 19977 reference numbering; 1-based inclusive)

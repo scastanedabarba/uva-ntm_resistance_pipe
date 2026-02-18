@@ -11,7 +11,7 @@
 set -euo pipefail
 
 # ------------------------------------------------------------
-# simulate_perfect_reads.slurm
+# simulate_reads_wgsim.slurm
 #
 # Submits as a SLURM array job: one task per FASTA in
 #   <workdir>/atcc_dataset/refs/*.fasta

@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # ------------------------------------------------------------
-# step1_assembly_blast.slurm
+# 01_assembly_blast.slurm
 #
 # Step 1 (per isolate):
 #   1) SPAdes assembly (PE + optional -s singletons)
@@ -62,7 +62,7 @@ READDIR="$(dirname "$R1FASTQ")"
 SEFASTQ="${READDIR}/${ISOLATE}_SE.trim.fq.gz"
 
 # Use your FASTA exactly as-is
-TARGET_FASTA="${TARGET_FASTA:-${PIPE_OUTDIR}/scripts/nucleotide.fna}"
+: "${TARGET_FASTA:?ERROR: TARGET_FASTA env var not set (export from controller)}"
 
 # BLAST thresholds (do NOT interpret here; only filter)
 MIN_PID=90

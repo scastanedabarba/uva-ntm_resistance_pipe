@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # ------------------------------------------------------------
-# site_mutants.sh  (Step 1 ONLY)
+# make_site_mutants.sh
 #
 # Creates WT + per-site mutant FASTAs from ATCC19977 reference, then:
-#   - runs site_verification.py on each generated FASTA (including WT)
+#   - runs verify_sites.py on each generated FASTA (including WT)
 #   - concatenates all verification outputs into one summary TSV with schema:
 #       mutated_target, gene, position, atcc_strain, observed_base, match
 #
@@ -25,7 +25,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 USAGE:
-  bash site_mutants.sh --workdir <path> [options]
+  bash make_site_mutants.sh --workdir <path> [options]
 
 REQUIRED:
   --workdir <dir>         Working directory (contains references/)
@@ -268,8 +268,9 @@ make_deletion_fasta "erm41_del_large" "$del_large_start" 300
 VERIFDIR="$OUTDIR/site_verification"
 mkdir -p "$VERIFDIR"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERIFY_SCRIPT="$SCRIPT_DIR/site_verification.py"
+# Repo-relative: simulation/ is one level below repo root
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERIFY_SCRIPT="$REPO_ROOT/scripts/verify_sites.py"
 
 if [[ ! -f "$VERIFY_SCRIPT" ]]; then
   echo "ERROR: Verification script not found: $VERIFY_SCRIPT" >&2

@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # ------------------------------------------------------------
-# run_atcc_sim_pipeline.sh
+# run_atcc_simulation.sh
 #
 # Wrapper to:
-#   1) Run scripts/site_mutants.sh to generate WT + mutant FASTAs
-#      (including deletion cases if added to site_mutants.sh)
+#   1) Run simulation/make_site_mutants.sh to generate WT + mutant FASTAs
+#      (including deletion cases if added to make_site_mutants.sh)
 #   2) Submit a SLURM array job to simulate PERFECT (error-free) reads
 #      for each FASTA in <workdir>/atcc_dataset/refs/
 #   3) Submit an additional small SLURM array job to simulate LOW-COVERAGE
@@ -14,15 +14,8 @@ set -euo pipefail
 #   4) Submit a mixing job to create mixed-allele read datasets (5% and 50%)
 #      by combining WT + mutant reads.
 #
-# Assumptions:
-#   - scripts/site_mutants.sh exists and takes: --workdir <dir> [--chrom <contig>]
-#   - scripts/simulate_perfect_reads.slurm exists (array job; uses $WORKDIR)
-#   - scripts/simulate_perfect_reads_from_list.slurm exists (array job; uses $FASTA_LIST)
-#   - scripts/mix_reads.slurm exists (single job; consumes existing reads)
-#   - FASTAs written to: <workdir>/atcc_dataset/refs/*.fasta
-#
 # Usage:
-#   bash scripts/run_atcc_sim_pipeline.sh --workdir /scratch/sgj4qr/mycobac_validation
+#   bash run_atcc_simulation.sh --workdir /scratch/sgj4qr/mycobac_validation
 #
 # Optional env overrides for read simulation:
 #   PAIRS=1000000 READLEN=150 INSMEAN=300 INSSD=30 SEED=12345 FORCE=0
@@ -35,16 +28,16 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-run_atcc_sim_pipeline.sh
+run_atcc_simulation.sh
 
 USAGE:
-  bash scripts/run_atcc_sim_pipeline.sh --workdir <dir> [options]
+  bash run_atcc_simulation.sh --workdir <dir> [options]
 
 REQUIRED:
   --workdir <dir>     Base working directory
 
 OPTIONS:
-  --chrom <name>      Contig name for site_mutants.sh (default: CU458896.1)
+  --chrom <name>      Contig name for make_site_mutants.sh (default: CU458896.1)
   --force_reads       Overwrite existing read files (sets FORCE=1 for SLURM jobs)
   -h, --help          Show help and exit
 
@@ -82,12 +75,13 @@ done
 [[ -z "$WORKDIR" ]] && { echo "ERROR: --workdir required" >&2; usage >&2; exit 1; }
 WORKDIR="$(cd "$WORKDIR" && pwd)"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SITE_MUTANTS="$SCRIPT_DIR/site_mutants.sh"
-SIM_SLURM="$SCRIPT_DIR/simulate_perfect_reads.slurm"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SIM_DIR="$REPO_ROOT/simulation"
 
-SIM_LIST_SLURM="$SCRIPT_DIR/simulate_perfect_reads_from_list.slurm"
-MIX_SLURM="$SCRIPT_DIR/mix_reads.slurm"
+SITE_MUTANTS="$SIM_DIR/make_site_mutants.sh"
+SIM_SLURM="$SIM_DIR/simulate_reads_wgsim.slurm"
+SIM_LIST_SLURM="$SIM_DIR/simulate_reads_from_list.slurm"
+MIX_SLURM="$SIM_DIR/mix_reads.slurm"
 
 [[ -f "$SITE_MUTANTS" ]] || { echo "ERROR: Missing: $SITE_MUTANTS" >&2; exit 1; }
 [[ -f "$SIM_SLURM" ]] || { echo "ERROR: Missing SLURM script: $SIM_SLURM" >&2; exit 1; }

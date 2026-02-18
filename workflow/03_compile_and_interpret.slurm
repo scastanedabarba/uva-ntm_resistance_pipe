@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=myco_step3_compile
+#SBATCH --job-name=myco_compile_interpret
 #SBATCH --partition=standard
 #SBATCH --account=amr_services_paid
 #SBATCH --cpus-per-task=1
@@ -12,7 +12,7 @@ set -euo pipefail
 
 if [[ $# -lt 4 ]]; then
   echo "USAGE:"
-  echo "  sbatch step3_compile.slurm <workdir> <outdir> <linelist> <targets_fasta> [only_isolate] [ref_contig]"
+  echo "  sbatch 03_compile_and_interpret.slurm <workdir> <outdir> <linelist> <targets_fasta> [only_isolate] [ref_contig]"
   exit 2
 fi
 
@@ -24,8 +24,9 @@ ONLY_ISO="${5:-}"
 REF_CONTIG="${6:-CU458896.1}"
 
 # Resolve python script from WORKDIR/scripts
-PY_SCRIPT="${WORKDIR%/}/scripts/step3_compile.py"
-PY_SCRIPT2="${WORKDIR%/}/scripts/step4_interpret.py"
+: "${REPO_ROOT:?ERROR: REPO_ROOT env var not set (export from controller)}"
+PY_SCRIPT="${REPO_ROOT%/}/scripts/compile_summary.py"
+PY_SCRIPT2="${REPO_ROOT%/}/scripts/interpret_calls.py"
 
 if [[ ! -s "$PY_SCRIPT" ]]; then
   echo "ERROR: Missing step3 python script: $PY_SCRIPT" >&2

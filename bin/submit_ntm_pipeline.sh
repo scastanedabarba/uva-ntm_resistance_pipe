@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Repo-relative paths
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORKFLOW_DIR="$REPO_ROOT/workflow"
+SCRIPTS_DIR="$REPO_ROOT/scripts"
+REF_DIR="$REPO_ROOT/references"
+SIM_DIR="$REPO_ROOT/simulation"
 
 # ------------------------------------------------------------
 # submit_ntm_pipeline.sh  (STEP1 + STEP2 + STEP3)
@@ -127,12 +133,10 @@ STATUS_TSV="$OUTDIR/status/isolate_status.tsv"
 echo -e "Isolate\tRun\tR1\tR2\tReadStatus\tStep1Job\tStep2Job" > "$STATUS_TSV"
 
 # Resolve directory where this controller script lives
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-STEP1_SCRIPT="${SCRIPT_DIR}/step1_assembly_blast.slurm"
-STEP2_SCRIPT="${SCRIPT_DIR}/step2_map_call.slurm"
-STEP3_SCRIPT="${SCRIPT_DIR}/step3_compile.slurm"
-TARGETS_FASTA="${SCRIPT_DIR}/nucleotide.fna"
+STEP1_SCRIPT="$WORKFLOW_DIR/01_assembly_blast.slurm"
+STEP2_SCRIPT="$WORKFLOW_DIR/02_map_call.slurm"
+STEP3_SCRIPT="$WORKFLOW_DIR/03_compile_and_interpret.slurm"
+TARGETS_FASTA="$REF_DIR/nucleotide.fna"
 
 for f in "$STEP1_SCRIPT" "$STEP2_SCRIPT" "$STEP3_SCRIPT" "$TARGETS_FASTA"; do
   [[ -f "$f" ]] || { echo "ERROR: Missing required file: $f" >&2; exit 1; }
@@ -280,10 +284,10 @@ if [[ ${#STEP3_DEPS[@]} -gt 0 ]]; then
   DEP_STR="$(IFS=:; echo "${STEP3_DEPS[*]}")"
 
   # Always use scripts from WORKDIR (avoids /var/spool/slurm path issues)
-  STEP3_PY="${WORKDIR%/}/scripts/step3_compile.py"
-  STEP3_TARGETS="${WORKDIR%/}/scripts/nucleotide.fna"
+  STEP3_TARGETS="$REF_DIR/nucleotide.fna"
 
-  [[ -s "$STEP3_PY" ]] || { echo "ERROR: Missing step3 python: $STEP3_PY" >&2; exit 1; }
+  [[ -s "$SCRIPTS_DIR/compile_summary.py" ]] || { echo "ERROR: Missing compile script: $SCRIPTS_DIR/compile_summary.py" >&2; exit 1; }
+  [[ -s "$SCRIPTS_DIR/interpret_calls.py" ]] || { echo "ERROR: Missing interpret script: $SCRIPTS_DIR/interpret_calls.py" >&2; exit 1; }
   [[ -s "$STEP3_TARGETS" ]] || { echo "ERROR: Missing targets fasta: $STEP3_TARGETS" >&2; exit 1; }
 
   STEP3_ARGS=( "$WORKDIR" "$OUTDIR" "$LINELIST" "$STEP3_TARGETS" )
@@ -302,7 +306,8 @@ if [[ ${#STEP3_DEPS[@]} -gt 0 ]]; then
     --chdir="$WORKDIR" \
     --output="$OUTDIR/logs/step3_compile_%j.out" \
     --error="$OUTDIR/logs/step3_compile_%j.err" \
-    "$STEP3_SCRIPT" "${STEP3_ARGS[@]}"
+    --export=ALL,REPO_ROOT="$REPO_ROOT" \
+  "$STEP3_SCRIPT" "$WORKDIR" "$OUTDIR" "$LINELIST" "$STEP3_TARGETS" ${ONLY_ISO:+$ONLY_ISO} "CU458896.1"
 
 else
   echo "No isolate jobs were submitted." >&2

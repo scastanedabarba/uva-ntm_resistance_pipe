@@ -44,7 +44,7 @@ os.makedirs(os.path.join(OUTDIR, "summary"), exist_ok=True)
 os.makedirs(os.path.join(OUTDIR, "status"), exist_ok=True)
 
 # -----------------------------------
-# Target gene coordinates (MATCH step2_map_call.slurm)
+# Target gene coordinates (MATCH 02_map_call.slurm)
 # 1-based inclusive
 # -----------------------------------
 RRS_START, RRS_END = 1462398, 1463901

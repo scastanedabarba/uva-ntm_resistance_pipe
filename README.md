@@ -52,9 +52,6 @@ Tested on UVA Rivanna.
 -   Linelist (CSV or TSV)
 -   Trimmed paired-end reads located at:
 
-```{=html}
-<!-- -->
-```
     /project/amr_services/qc/<run>/<isolate>/<isolate>_R1.trim.fq.gz
     /project/amr_services/qc/<run>/<isolate>/<isolate>_R2.trim.fq.gz
 
@@ -82,8 +79,8 @@ Associated assembly: OQ656457.1
 
 ## Gene Coordinates (1-based reference positions)
 
--   rrs: 1,462,398 -- 1,463,901\
--   rrl: 1,464,208 -- 1,467,319\
+-   rrs: 1,462,398 -- 1,463,901
+-   rrl: 1,464,208 -- 1,467,319
 -   erm41: 2,345,955 -- 2,346,476
 
 ## Site-of-Interest Positions (Gene-Relative)
@@ -127,14 +124,199 @@ and genome-relative numbering.
 
 # Output Files
 
-summary/blast_top_hits.tsv\
-summary/sites_evidence.tsv\
-summary/erm41_truncation_metrics.tsv\
-summary/interpretation.tsv\
-summary/myco_prediction_summary.xlsx
+All final outputs are written to:
 
-The Excel file aggregates variant, truncation, and BLAST summaries for
-review but TSV files remain the primary reproducible outputs.
+<outdir>/summary/
+
+The TSV files are the primary reproducible outputs.
+The Excel file is a convenience report.
+
+---------------------------------------------------------------------
+
+## 1. summary/blast_top_hits.tsv
+
+Purpose:
+Summarizes detection of erm41, erm39, and erm55 genes using BLAST
+against assembled contigs.
+
+Used to:
+- Confirm gene presence
+- Support erm41 applicability logic
+- Flag potential macrolide resistance from erm39/erm55
+
+Columns:
+Isolate              : Isolate ID
+GeneGroup            : erm41 / erm39 / erm55
+QueryID              : Query FASTA sequence ID
+QueryLen             : Length of query gene
+Subject              : Contig hit in assembly
+Pident               : Percent identity
+AlnLen               : Alignment length
+QcovPct              : Percent query coverage
+Qstart, Qend         : Query alignment coordinates
+Sstart, Send         : Subject alignment coordinates
+Evalue               : BLAST E-value
+Bitscore             : BLAST bitscore
+TotalHits            : Total hits detected
+PreferredHits        : Hits meeting ≥90% identity AND ≥90% coverage
+
+Detection Threshold:
+A gene is considered detected if:
+Percent identity ≥ 90%
+AND
+Query coverage ≥ 90%
+
+---------------------------------------------------------------------
+
+## 2. summary/sites_evidence.tsv
+
+Purpose:
+Lists variant evidence at predefined resistance-associated positions.
+
+Important:
+Positions are 1-based relative to the gene start,
+NOT relative to the whole ATCC genome.
+
+Sites Evaluated:
+
+rrl:   2269, 2270, 2271, 2281, 2293
+rrs:   1373, 1375, 1376, 1458
+erm41: 19, 28
+
+Columns:
+Isolate     : Isolate ID
+Gene        : rrl / rrs / erm41
+position    : Gene-relative 1-based position
+Depth       : Read depth at corresponding reference coordinate
+REF         : Reference base
+ALT         : Alternate base
+QUAL        : Variant quality
+DP          : Total depth from VCF
+AD          : Allele depths (ref,alt)
+AF          : Allele frequency (alt_count / depth)
+
+Allele Frequency Interpretation:
+
+AF ≥ 0.90         : MUT
+0.10 ≤ AF < 0.90  : MIXED
+AF < 0.10         : WT
+Depth < threshold : INDETERMINATE
+
+Default depth threshold: 30×.
+
+---------------------------------------------------------------------
+
+## 3. summary/erm41_truncation_metrics.tsv
+
+Purpose:
+Determines whether erm41 is truncated based on coverage.
+
+Strategy:
+Coverage is evaluated across:
+
+Left flank:      gene positions 20–140
+Right flank:     gene positions 450–560
+Deletion region: gene positions 159–432
+
+Deletion inferred if:
+
+Median depth (deletion region)
+/
+Median depth (flanks)
+≤ 0.10
+
+AND flanking coverage ≥ 20×.
+
+Columns:
+Isolate               : Isolate ID
+erm_len               : Length of erm41 gene
+erm_median_depth      : Median depth across full gene
+left_median_depth     : Median depth left flank
+right_median_depth    : Median depth right flank
+flank_median_depth    : Median of left + right
+erm_del_range         : Gene-relative deletion region
+del_median_depth      : Median depth in deletion region
+del_to_flank_ratio    : Deletion depth ÷ flank depth
+erm41_callable        : TRUE if flank depth ≥ 20×
+
+---------------------------------------------------------------------
+
+## 4. summary/interpretation.tsv
+
+Purpose:
+Final phenotype prediction per isolate for:
+
+- Clarithromycin
+- Amikacin
+
+Integrates:
+- rrl mutations
+- rrs mutations
+- erm41 truncation
+- erm41 genotype (positions 19, 28)
+- erm39 detection
+- erm55 detection
+
+Columns:
+
+Isolate
+clarithromycin_call
+clarithromycin_reason
+amikacin_call
+amikacin_reason
+rrl_* site calls
+erm41_28
+erm41_19
+rrs_* site calls
+erm41_truncation
+erm39_detected
+erm55_detected
+notes
+
+Clarithromycin Logic (Simplified):
+
+1. Any rrl MUT → Resistant
+2. rrl MIXED → Resistance possible
+3. rrl WT → evaluate erm41
+   - Truncated → Susceptible
+   - Full-length + 28=T & 19=C → Resistant
+   - Full-length + 28=T & 19=T → Susceptible
+   - Mixed → Resistance possible
+4. erm39/erm55 detected → may upgrade to Resistance possible
+
+Amikacin Logic:
+
+1. rrs MUT → Resistant
+2. rrs MIXED → Resistance possible
+3. Insufficient depth → Indeterminate
+4. Otherwise → Susceptible
+
+---------------------------------------------------------------------
+
+## 5. summary/myco_prediction_summary.xlsx
+
+Purpose:
+Convenience aggregation of:
+
+- Variant evidence
+- Truncation metrics
+- BLAST summary
+
+Intended for clinician-friendly review.
+
+The TSV files remain the primary reproducible outputs.
+
+---------------------------------------------------------------------
+
+Reproducibility Note:
+
+All phenotype decisions are derived exclusively from:
+
+- sites_evidence.tsv
+- erm41_truncation_metrics.tsv
+- blast_top_hits.tsv
+
+interpretation.tsv is a deterministic transformation of these files.
 
 ------------------------------------------------------------------------
 

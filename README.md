@@ -1,147 +1,287 @@
-# UVA NTM Resistance Pipeline
-
-Pipeline for genomic prediction of **clarithromycin and amikacin resistance** in *Mycobacterium abscessus complex* using whole-genome sequencing data.
-
-Designed for SLURM-based HPC environments (e.g., UVA Rivanna).
-
----
+# UVA Mycobacterial Resistance Pipeline
 
 ## Overview
 
 This pipeline performs:
 
-1. Assembly-based detection of macrolide resistance genes (erm41, erm39, erm55)
-2. Reference-based variant calling of:
-   - rrl
-   - rrs
-   - erm41
-3. Coverage-based detection of erm41 truncation
-4. Rule-based antimicrobial susceptibility interpretation
-5. Optional ATCC 19977 simulation framework for validation
+1. Assembly + BLAST detection of erm genes  
+2. Targeted variant calling (rrl, rrs, erm41)  
+3. Coverage-based erm41 truncation assessment  
+4. Interpretation of clarithromycin and amikacin resistance  
+
+It supports:
+- Clinical isolates
+- Simulated ATCC19977 datasets
 
 ---
 
-## Repository Structure
+# ⚠️ IMPORTANT: Simulation vs Pipeline
 
-bin/ Entry-point wrapper scripts
-workflow/ SLURM step scripts (01–03)
-scripts/ Python logic (compile + interpret)
-simulation/ ATCC validation dataset generator
-references/ Packaged reference FASTAs
+## Simulation DOES NOT run the pipeline
 
+Running the simulation scripts **only generates synthetic FASTQ datasets**.
 
----
+It does NOT:
+- assemble reads
+- call variants
+- generate resistance predictions
 
-## Requirements
-
-### System
-- Linux
-- SLURM scheduler
-
-### Required software (via modules or conda)
-- spades
-- bwa
-- samtools
-- bcftools
-- blastn
-- wgsim
-- python3 (with biopython, openpyxl)
+After simulation, you must run the full pipeline on the simulated dataset.
 
 ---
 
-## References Included
+# Part 1 – Generate Simulated Dataset (Optional)
 
-references/ATCC19977.fasta
-references/nucleotide.fna
+Example:
 
+```bash
+bash simulation/run_atcc_sim_pipeline.sh \
+  --outdir /scratch/sgj4qr/atcc_sim_test \
+  --coverage 100
+```
 
-- ATCC 19977 reference genome
-- Target gene FASTA for BLAST (erm variants)
+This generates:
 
-Indexes (bwa, samtools) are generated at runtime and are NOT stored in the repo.
+```
+/scratch/sgj4qr/atcc_sim_test/
+    isolate1/
+        isolate1_R1.fastq.gz
+        isolate1_R2.fastq.gz
+    isolate2/
+    ...
+```
 
----
-
-## Running the Pipeline (Real Data)
-
-bash bin/submit_ntm_pipeline.sh
-<linelist.tsv>
-<workdir>
-<outdir>
-
-
-### Linelist formats
-
-- 2-column: isolate, run
-- OR 1-column isolate (requires --reads-root)
-
-### Output structure
-
-Per isolate:
-
-assembly/
-blast/
-mapping/
-variants/
-logs/
-
-
-Global outputs:
-
-summary/
-blast_top_hits.tsv
-sites_evidence.tsv
-erm41_truncation_metrics.tsv
-interpretation.tsv
-myco_prediction_summary.xlsx
-
+This step only creates FASTQs.
 
 ---
 
-## Running Simulation Validation
+# Part 2 – Run the Pipeline
 
-Generate mutant FASTAs, simulate reads, and test pipeline logic:
+## Clinical dataset
 
-bash bin/run_atcc_simulation.sh --workdir <dir>
+```bash
+bash submit_ntm_pipeline.sh \
+  linelist.tsv \
+  /scratch/sgj4qr/myco_run
+```
 
+## Simulated dataset
 
-This will:
+```bash
+bash submit_ntm_pipeline.sh \
+  linelist.tsv \
+  /scratch/sgj4qr/atcc_sim_test
+```
 
-1. Generate SNP and deletion mutants
-2. Simulate high-coverage reads
-3. Simulate low-coverage datasets
-4. Create mixed allele datasets (5% and 50%)
-
----
-
-## Interpretation Logic
-
-Clarithromycin decision tree prioritizes:
-
-1. rrl mutations
-2. erm41 truncation
-3. erm41 19/28 genotype
-4. erm39/erm55 detection
-
-Amikacin decision based on rrs mutations.
-
-Default depth threshold: 30x (configurable).
+Where:
+- `linelist.tsv` contains isolate IDs (first column only)
+- `outdir` is the root pipeline directory
 
 ---
 
-## Versioning
+# Pipeline Structure
 
-Tag stable releases:
+For each isolate:
 
-git tag -a v0.1.0 -m "Initial stable release"
-git push origin v0.1.0
-
+```
+outdir/
+  ISOLATE/
+    assembly/
+    blast/
+    mapping/
+    variants/
+    status_step1.tsv
+    status_step2.tsv
+```
 
 ---
 
-## Author
+# Output Files Explained
 
-Salvador Castaneda  
-University of Virginia  
-AMR Services
+All final outputs are written to:
+
+```
+outdir/summary/
+```
+
+---
+
+## 1️⃣ blast_top_hits.tsv
+
+Summarizes top BLAST hit per gene group:
+
+- erm41
+- erm39
+- erm55
+
+Columns:
+- Pident
+- QcovPct
+- TotalHits
+- PreferredHits (≥90% identity AND ≥90% coverage)
+
+Used for:
+- Detecting erm39 / erm55
+- erm41 presence (fallback if coverage insufficient)
+
+---
+
+## 2️⃣ sites_evidence.tsv
+
+Contains only variant sites observed at positions of interest:
+
+| Gene  | Position     | Meaning |
+|--------|-------------|---------|
+| rrl    | 2269–2293   | Macrolide resistance mutations |
+| rrs    | 1373–1458   | Amikacin resistance mutations |
+| erm41  | 19, 28      | Inducible macrolide resistance genotype |
+
+Columns:
+- Depth (reference coordinate depth)
+- REF
+- ALT
+- DP
+- AD
+- AF (allele frequency)
+
+Allele Frequency logic:
+- ≥0.90 → MUT
+- 0.10–0.89 → MIXED
+- <0.10 → WT
+
+---
+
+## 3️⃣ erm41_truncation_metrics.tsv
+
+Coverage-based truncation assessment.
+
+Key column:
+- `del_to_flank_ratio`
+
+Logic:
+If flank median depth ≥ threshold AND  
+   deletion-region median depth / flank median depth ≤ 0.10  
+→ TRUNCATED  
+Else → NOT_TRUNCATED  
+
+If flanks not callable → INDETERMINATE
+
+---
+
+## 4️⃣ interpretation.tsv  ⭐ Final Calls
+
+Columns include:
+
+- clarithromycin_call
+- clarithromycin_reason
+- amikacin_call
+- amikacin_reason
+- Individual site states
+- erm41_truncation
+- erm39_detected
+- erm55_detected
+- notes
+
+This is the authoritative final output.
+
+---
+
+# Interpretation Logic
+
+## Clarithromycin
+
+Priority order:
+
+1. Any rrl MUT → Resistant  
+2. rrl MIXED → Resistance possible  
+3. rrl WT → evaluate erm41  
+
+If erm41:
+
+- TRUNCATED → Susceptible  
+- NOT_TRUNCATED:
+  - 28 = C → Susceptible  
+  - 28 = T & 19 = C → Resistant  
+  - Mixed → Resistance possible  
+
+erm39 / erm55 detected:
+→ Forces "Resistance possible" unless already Resistant
+
+---
+
+## Amikacin
+
+- Any rrs MUT → Resistant  
+- Mixed → Resistance possible  
+- Low depth → Indeterminate  
+- Otherwise → Susceptible  
+
+---
+
+# Excel Summary
+
+```
+summary/myco_prediction_summary.xlsx
+```
+
+Tabs:
+- variants
+- truncation
+- blast
+
+Convenience file only — interpretation.tsv is authoritative.
+
+---
+
+# Status Tracking
+
+Each isolate contains:
+
+## status_step1.tsv
+Assembly + BLAST
+
+## status_step2.tsv
+Mapping + variant calling
+
+---
+
+# Rerunning Failed Isolates
+
+If an isolate failed:
+
+```bash
+bash submit_ntm_pipeline.sh \
+  linelist.tsv \
+  /scratch/sgj4qr/myco_run \
+  --isolate ISOLATE_ID
+```
+
+This reruns only that isolate.
+
+---
+
+# Rerun Only Summary + Interpretation
+
+After fixing failed isolates:
+
+```bash
+sbatch \
+  --export=ALL,REPO_ROOT=/scratch/sgj4qr/mycobac_validation/scripts \
+  workflow/03_compile_and_interpret.slurm \
+  /scratch/sgj4qr/myco_run \
+  linelist.tsv \
+  references/nucleotide.fna \
+  CU458896.1
+```
+
+This regenerates:
+
+- blast_top_hits.tsv
+- sites_evidence.tsv
+- erm41_truncation_metrics.tsv
+- interpretation.tsv
+- myco_prediction_summary.xlsx
+- combined status tables
+
+No re-assembly occurs.
 

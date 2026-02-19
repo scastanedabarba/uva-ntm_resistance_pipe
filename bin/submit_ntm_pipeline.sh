@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
 # Repo-relative paths
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOW_DIR="$REPO_ROOT/workflow"
@@ -12,32 +13,31 @@ SIM_DIR="$REPO_ROOT/simulation"
 #
 # Inputs:
 #   1) LINELIST   (CSV or TSV)
-#   2) WORKDIR    (must contain: references/ATCC19977.fasta)
-#   3) OUTDIR     (pipeline output root; per-isolate dirs written here)
+#   2) OUTDIR     (pipeline output root; per-isolate dirs written here)
 #
 # Linelist formats:
-#   - 2 columns: isolate, run   (CSV or TSV)   [always allowed]
-#   - 1 column: isolate only    [allowed ONLY when --reads-root is provided]
-#       (run will be set to "SIM")
+#   - Production: 2 columns: isolate, run   (CSV or TSV)
+#   - Simulated : 1 column : isolate only   (allowed ONLY with --simulated <DIR>)
 #
 # Read inputs:
-#   Default (production):
+#   Production (default):
 #     /project/amr_services/qc/<run>/<isolate>/
 #       <isolate>_R1.trim.fq.gz
 #       <isolate>_R2.trim.fq.gz
 #
-#   With --reads-root:
-#     <reads-root>/<isolate>/
+#   Simulated (--simulated <DIR>):
+#     <DIR>/atcc_dataset/reads/<isolate>/
 #       <isolate>_R1.trim.fq.gz
 #       <isolate>_R2.trim.fq.gz
 #
-# References (ALWAYS from WORKDIR):
-#   WORKDIR/references/ATCC19977.fasta
+# References (packaged in repo by default):
+#   repo/references/ATCC19977.fasta
+#   repo/references/nucleotide.fna
 #
 # Submits:
 #   - Step 1 per isolate (assembly + BLAST)
 #   - Step 2 per isolate (mapping + variants + consensus)
-#   - Step 3 once (compile) after all Step1+Step2 jobs finish
+#   - Step 3 once (compile + interpret) after all Step1+Step2 jobs finish
 # ------------------------------------------------------------
 
 usage() {
@@ -45,19 +45,20 @@ usage() {
 submit_ntm_pipeline.sh
 
 USAGE:
-  bash submit_ntm_pipeline.sh <linelist.(csv|tsv)> <workdir> <outdir> [options]
+  bash submit_ntm_pipeline.sh <linelist.(csv|tsv)> <outdir> [options]
 
 REQUIRED:
-  linelist   CSV/TSV with isolate in first column (run optional if --reads-root used)
-  workdir    Base directory containing references/ATCC19977.fasta
+  linelist   CSV/TSV with isolate in first column (run required unless --simulated)
   outdir     Output directory root for pipeline outputs
 
 OPTIONS:
-  --reads-root <DIR>  Override read root directory (useful for simulated reads)
-  --isolate <ID>      Run only a single isolate (must be present in linelist)
-  --partition <p>     SLURM partition (default: standard)
-  --ref-fasta <p>     Fasta to us (default: repo_dir/references/ATCC19977.fasta)
-  -h, --help          Show this help and exit
+  --simulated <DIR>  Run in ATCC simulated mode using reads in:
+                      <DIR>/atcc_dataset/reads/<isolate>/<isolate>_R{1,2}.trim.fq.gz
+                      In this mode, a 1-column linelist is allowed (run will be set to "SIM").
+  --isolate <ID>     Run only a single isolate (must be present in linelist)
+  --partition <p>    SLURM partition (default: standard)
+  --ref-fasta <p>    Override reference FASTA (default: repo/references/ATCC19977.fasta)
+  -h, --help         Show this help and exit
 EOF
 }
 
@@ -66,24 +67,23 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if [[ $# -lt 3 ]]; then
+if [[ $# -lt 2 ]]; then
   echo "ERROR: Missing required arguments." >&2
   usage >&2
   exit 1
 fi
 
 LINELIST="$1"
-WORKDIR="$2"
-OUTDIR="$3"
+OUTDIR="$2"
 
 # Defaults
 ACCOUNT="amr_services_paid"
 PARTITION="standard"
 ONLY_ISOLATE=""
-READS_ROOT=""
+SIMULATED_DIR=""
 REF_FASTA_OVERRIDE=""
 
-shift 3
+shift 2
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --partition)
@@ -96,9 +96,9 @@ while [[ $# -gt 0 ]]; do
       [[ -z "$ONLY_ISOLATE" ]] && { echo "ERROR: --isolate requires a value" >&2; exit 1; }
       shift 2
       ;;
-    --reads-root)
-      READS_ROOT="${2:-}"
-      [[ -z "$READS_ROOT" ]] && { echo "ERROR: --reads-root requires a value" >&2; exit 1; }
+    --simulated)
+      SIMULATED_DIR="${2:-}"
+      [[ -z "$SIMULATED_DIR" ]] && { echo "ERROR: --simulated requires a value" >&2; exit 1; }
       shift 2
       ;;
     --ref-fasta)
@@ -119,27 +119,27 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -f "$LINELIST" ]] || { echo "ERROR: Linelist not found: $LINELIST" >&2; exit 1; }
-[[ -d "$WORKDIR" ]]  || { echo "ERROR: Workdir not found: $WORKDIR" >&2; exit 1; }
 
-# Normalize WORKDIR and OUTDIR
-WORKDIR="$(cd "$WORKDIR" && pwd)"
+# Normalize paths
 LINELIST="$(cd "$(dirname "$LINELIST")" && pwd)/$(basename "$LINELIST")"
-
 mkdir -p "$OUTDIR"
 OUTDIR="$(cd "$OUTDIR" && pwd)"
 
-# If reads-root provided, normalize to absolute path (and validate)
-if [[ -n "$READS_ROOT" ]]; then
-  READS_ROOT="$(cd "$READS_ROOT" && pwd)"
-  [[ -d "$READS_ROOT" ]] || { echo "ERROR: --reads-root is not a directory: $READS_ROOT" >&2; exit 1; }
+# Simulated mode: normalize and validate
+READS_ROOT=""
+if [[ -n "$SIMULATED_DIR" ]]; then
+  SIMULATED_DIR="$(cd "$SIMULATED_DIR" && pwd)"
+  [[ -d "$SIMULATED_DIR" ]] || { echo "ERROR: --simulated is not a directory: $SIMULATED_DIR" >&2; exit 1; }
+  READS_ROOT="$SIMULATED_DIR/atcc_dataset/reads"
+  [[ -d "$READS_ROOT" ]] || { echo "ERROR: Simulated reads directory not found: $READS_ROOT" >&2; exit 1; }
 fi
 
-mkdir -p "$OUTDIR"/{logs,status,summary,compiled}
+mkdir -p "$OUTDIR"/{logs,status,summary}
 
 STATUS_TSV="$OUTDIR/status/isolate_status.tsv"
 echo -e "Isolate\tRun\tR1\tR2\tReadStatus\tStep1Job\tStep2Job" > "$STATUS_TSV"
 
-# Resolve directory where this controller script lives
+# Workflow + reference inputs
 STEP1_SCRIPT="$WORKFLOW_DIR/01_assembly_blast.slurm"
 STEP2_SCRIPT="$WORKFLOW_DIR/02_map_call.slurm"
 STEP3_SCRIPT="$WORKFLOW_DIR/03_compile_and_interpret.slurm"
@@ -149,18 +149,18 @@ for f in "$STEP1_SCRIPT" "$STEP2_SCRIPT" "$STEP3_SCRIPT" "$TARGETS_FASTA"; do
   [[ -f "$f" ]] || { echo "ERROR: Missing required file: $f" >&2; exit 1; }
 done
 
-# Reference ALWAYS from workdir/references
+# Reference FASTA (repo-packaged default)
 if [[ -n "$REF_FASTA_OVERRIDE" ]]; then
   REF_FASTA="$(cd "$(dirname "$REF_FASTA_OVERRIDE")" && pwd)/$(basename "$REF_FASTA_OVERRIDE")"
 else
   REF_FASTA="$REF_DIR/ATCC19977.fasta"
 fi
-[[ -s "$REF_FASTA" ]] || { echo "ERROR: Reference FASTA not found: $REF_FASTA" >&2; exit 1; }
+[[ -s "$REF_FASTA" ]] || { echo "ERROR: Reference FASTA not found or empty: $REF_FASTA" >&2; exit 1; }
 
 # ------------------------------------------------------------
 # Index the reference ONCE here (avoids race conditions + bwa index segfaults)
 # ------------------------------------------------------------
-echo "[$(date)] Pre-indexing reference once: $REF_FASTA" >&2
+echo "[$(date)] Pre-indexing reference once (repo default unless --ref-fasta): $REF_FASTA" >&2
 
 if command -v module >/dev/null 2>&1; then
   module use /project/amr_services/modulefiles/ >/dev/null 2>&1 || true
@@ -171,7 +171,6 @@ fi
 command -v bwa >/dev/null 2>&1 || { echo "ERROR: bwa not found in PATH (module load bwa?)" >&2; exit 1; }
 command -v samtools >/dev/null 2>&1 || { echo "ERROR: samtools not found in PATH (module load samtools?)" >&2; exit 1; }
 
-# bwa index creates multiple files; use .bwt as sentinel
 if [[ ! -s "${REF_FASTA}.bwt" ]]; then
   bwa index "$REF_FASTA" > "$OUTDIR/logs/ref_bwa_index.out" 2> "$OUTDIR/logs/ref_bwa_index.err"
 fi
@@ -207,11 +206,9 @@ parse_linelist() {
 FOUND_ONLY_ISOLATE=0
 SAW_ONECOL=0
 SAW_TWOCOL=0
-
 STEP3_DEPS=()
 
 while IFS=$'\t' read -r ISOLATE RUN; do
-
   if [[ -n "$ONLY_ISOLATE" && "$ISOLATE" != "$ONLY_ISOLATE" ]]; then
     continue
   fi
@@ -223,14 +220,14 @@ while IFS=$'\t' read -r ISOLATE RUN; do
     SAW_TWOCOL=1
   fi
 
-  # Enforce: 1-column linelist allowed ONLY with --reads-root
+  # Enforce: 1-column linelist allowed ONLY with --simulated
   if [[ -z "${RUN:-}" && -z "$READS_ROOT" ]]; then
-    echo "ERROR: Linelist row for isolate '$ISOLATE' has no RUN (1-column format), but --reads-root was not provided." >&2
-    echo "       Provide a 2-column linelist (isolate,run) OR re-run with --reads-root <DIR>." >&2
+    echo "ERROR: Linelist row for isolate '$ISOLATE' has no RUN (1-column format), but --simulated was not provided." >&2
+    echo "       Provide a 2-column linelist (isolate,run) OR re-run with --simulated <DIR>." >&2
     exit 1
   fi
 
-  # If reads-root is set and run is missing, use a dummy
+  # In simulated mode, run defaults to SIM if missing
   if [[ -n "$READS_ROOT" && -z "${RUN:-}" ]]; then
     RUN="SIM"
   fi
@@ -246,7 +243,6 @@ while IFS=$'\t' read -r ISOLATE RUN; do
   R2="${READDIR}/${ISOLATE}_R2.trim.fq.gz"
 
   ISO_OUT="$OUTDIR/$ISOLATE"
-  # keep consistent directory names (mapping not map)
   mkdir -p "$ISO_OUT"/{assembly,blast,mapping,variants,logs}
 
   if [[ ! -s "$R1" || ! -s "$R2" ]]; then
@@ -278,7 +274,6 @@ while IFS=$'\t' read -r ISOLATE RUN; do
   )"
 
   STEP3_DEPS+=("$STEP1_JOBID" "$STEP2_JOBID")
-
   echo -e "${ISOLATE}\t${RUN}\t${R1}\t${R2}\tOK\t${STEP1_JOBID}\t${STEP2_JOBID}" >> "$STATUS_TSV"
 
 done < <(parse_linelist "$LINELIST")
@@ -293,46 +288,39 @@ fi
 # ------------------------------------------------------------
 if [[ ${#STEP3_DEPS[@]} -gt 0 ]]; then
   DEP_STR="$(IFS=:; echo "${STEP3_DEPS[*]}")"
-
-  # Always use scripts from WORKDIR (avoids /var/spool/slurm path issues)
   STEP3_TARGETS="$REF_DIR/nucleotide.fna"
 
   [[ -s "$SCRIPTS_DIR/compile_summary.py" ]] || { echo "ERROR: Missing compile script: $SCRIPTS_DIR/compile_summary.py" >&2; exit 1; }
   [[ -s "$SCRIPTS_DIR/interpret_calls.py" ]] || { echo "ERROR: Missing interpret script: $SCRIPTS_DIR/interpret_calls.py" >&2; exit 1; }
   [[ -s "$STEP3_TARGETS" ]] || { echo "ERROR: Missing targets fasta: $STEP3_TARGETS" >&2; exit 1; }
 
-  STEP3_ARGS=( "$WORKDIR" "$OUTDIR" "$LINELIST" "$STEP3_TARGETS" )
-  if [[ -n "$ONLY_ISOLATE" ]]; then
-    STEP3_ARGS+=( "$ONLY_ISOLATE" )
-  else
-    STEP3_ARGS+=( "" )
-  fi
-  STEP3_ARGS+=( "CU458896.1" )
-
   sbatch \
     --job-name="ntm3_compile" \
     --account="$ACCOUNT" \
     --partition="$PARTITION" \
     --dependency="afterany:${DEP_STR}" \
-    --chdir="$WORKDIR" \
+    --chdir="$OUTDIR" \
     --output="$OUTDIR/logs/step3_compile_%j.out" \
     --error="$OUTDIR/logs/step3_compile_%j.err" \
     --export=ALL,REPO_ROOT="$REPO_ROOT" \
-  "$STEP3_SCRIPT" "$WORKDIR" "$OUTDIR" "$LINELIST" "$STEP3_TARGETS" ${ONLY_ISO:+$ONLY_ISO} "CU458896.1"
-
+    "$STEP3_SCRIPT" \
+      "$OUTDIR" \
+      "$LINELIST" \
+      "$STEP3_TARGETS" \
+      "CU458896.1"
 else
   echo "No isolate jobs were submitted." >&2
 fi
 
 echo "Pipeline submission complete."
-echo "Workdir:     $WORKDIR"
+echo "Repo root:   $REPO_ROOT"
 echo "Reference:   $REF_FASTA"
 echo "Outdir:      $OUTDIR"
 echo "Status table: $STATUS_TSV"
 if [[ -n "$READS_ROOT" ]]; then
+  echo "Simulated:   $SIMULATED_DIR"
   echo "Reads root:  $READS_ROOT"
 fi
 if [[ "$SAW_ONECOL" -eq 1 && -n "$READS_ROOT" ]]; then
   echo "Note: 1-column linelist detected; RUN defaulted to 'SIM' where missing."
 fi
-

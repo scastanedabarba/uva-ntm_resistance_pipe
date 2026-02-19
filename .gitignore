@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+slurm_logs/
+*.out
+*.err
+
+# Outputs
+atcc_dataset/
+results/
+summary/
+status/
+
+# BWA / index files
+*.bwt
+*.sa
+*.ann
+*.amb
+*.pac
+*.fai
+
+# VCF
+*.vcf
+*.vcf.gz
+*.vcf.gz.tbi
+
+# BAM
+*.bam
+*.bam.bai
+

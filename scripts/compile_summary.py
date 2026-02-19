@@ -25,10 +25,6 @@ parser.add_argument(
     help="Targets FASTA used in Step 1 BLAST (e.g., scripts/nucleotide.fna)"
 )
 parser.add_argument(
-    "-s", "--isolate", default="",
-    help="Compile only one isolate (optional)"
-)
-parser.add_argument(
     "-r", "--ref-contig", default="CU458896.1",
     help="Reference contig name (only used for depth lookup)"
 )
@@ -37,7 +33,6 @@ args = parser.parse_args()
 OUTDIR = os.path.abspath(args.outdir)
 LINELIST = os.path.abspath(args.linelist)
 TARGETS_FASTA = os.path.abspath(args.targets_fasta)
-ONLY_ISO = args.isolate.strip()
 REF_CONTIG = args.ref_contig.strip()
 
 os.makedirs(os.path.join(OUTDIR, "summary"), exist_ok=True)
@@ -348,9 +343,6 @@ def _median_or_blank(vals: List[int]) -> str:
 # Main
 # -----------------------------------
 isolates = read_isolates_from_linelist(LINELIST)
-if ONLY_ISO:
-    isolates = [x for x in isolates if x == ONLY_ISO]
-
 qlens = read_fasta_lengths(TARGETS_FASTA)
 
 # -----------------------
@@ -401,9 +393,6 @@ with open(blast_out, "w") as out:
 
 # -----------------------
 # Sites evidence (VARIANT-ONLY)
-#   - Uses targets_variants.tsv for presence
-#   - Uses depth for depth at the reference coordinate
-#   - Output columns EXCLUDE POS_ref and VCF_present
 # -----------------------
 sites_out = os.path.join(OUTDIR, "summary", "sites_evidence.tsv")
 sites_header = [
@@ -446,7 +435,7 @@ with open(sites_out, "w") as out:
             ]) + "\n")
 
 # -----------------------
-# erm41 truncation metrics summary (coverage-based; interpretation later)
+# erm41 truncation metrics summary
 # -----------------------
 trunc_out = os.path.join(OUTDIR, "summary", "erm41_truncation_metrics.tsv")
 trunc_header = [
@@ -465,11 +454,9 @@ trunc_header = [
 erm_len = ERM41_END - ERM41_START + 1
 
 def _depth_list(depths: Dict[int, int], start_ref: int, end_ref: int) -> List[int]:
-    # inclusive range
     return [depths.get(pos, 0) for pos in range(start_ref, end_ref + 1)]
 
 def _gene_to_ref_range(gene_start_ref: int, g1: int, g2: int) -> Tuple[int, int]:
-    # gene positions are 1-based inclusive
     r1 = gene_start_ref + (g1 - 1)
     r2 = gene_start_ref + (g2 - 1)
     return (r1, r2)
@@ -506,7 +493,6 @@ with open(trunc_out, "w") as out:
         left_med = _median_or_blank(left_depths)
         right_med = _median_or_blank(right_depths)
 
-        # flank median = median of the two flank medians (using numeric values)
         flank_med_val = None
         try:
             lm = statistics.median(left_depths) if left_depths else 0
@@ -557,10 +543,6 @@ os.makedirs(PLOT_DIR, exist_ok=True)
 ERM41_LEN = ERM41_END - ERM41_START + 1
 
 def plot_erm41_coverage(isolate: str, depths: Dict[int, int]) -> None:
-    """
-    Plot per-base coverage across erm41 gene (gene coordinates),
-    with shaded deletion regions only.
-    """
     gene_pos = []
     gene_depth = []
 
@@ -577,35 +559,23 @@ def plot_erm41_coverage(isolate: str, depths: Dict[int, int]) -> None:
     ymax = max_depth * 1.10 if max_depth > 0 else 10
 
     fig, ax = plt.subplots(figsize=(10, 4))
-
-    # Coverage line
     ax.plot(gene_pos, gene_depth, linewidth=1)
 
-    # Shaded regions
     ax.axvspan(64, 65, color="orange", alpha=0.25)
     ax.axvspan(159, 432, color="red", alpha=0.15)
 
-    # Axis limits
     ax.set_xlim(0, ERM41_LEN)
     ax.set_ylim(0, ymax)
-
-    # Axis labels
     ax.set_xlabel("erm41 gene position")
     ax.set_ylabel("Depth")
-
-    # X ticks: only start and end
     ax.set_xticks([0, ERM41_LEN])
-
     ax.set_title(f"{isolate} – erm41 coverage")
 
     plt.tight_layout()
-
     out_png = os.path.join(PLOT_DIR, f"{isolate}.erm41_coverage.png")
     plt.savefig(out_png, dpi=150)
     plt.close(fig)
 
-
-# Generate plots
 for iso in isolates:
     depth_tsv = os.path.join(OUTDIR, iso, "variants", "targets_depth.tsv")
     depths = read_depth_tsv(depth_tsv, REF_CONTIG)
@@ -613,15 +583,11 @@ for iso in isolates:
         plot_erm41_coverage(iso, depths)
 
 # -----------------------
-# Write combined Excel summary (3 tabs) - robust TSV streaming
+# Write combined Excel summary (3 tabs)
 # -----------------------
 excel_out = os.path.join(OUTDIR, "summary", "myco_prediction_summary.xlsx")
 
 def tsv_to_sheet(ws, tsv_path: str) -> None:
-    """
-    Write a TSV file to an openpyxl worksheet.
-    Uses the header column count to pad/truncate inconsistent rows.
-    """
     if (not os.path.exists(tsv_path)) or os.path.getsize(tsv_path) == 0:
         ws.append(["(empty)"])
         return
@@ -642,11 +608,9 @@ def tsv_to_sheet(ws, tsv_path: str) -> None:
                 continue
             parts = line.split("\t")
 
-            # pad/truncate to match header width
             if len(parts) < ncol:
                 parts += [""] * (ncol - len(parts))
             elif len(parts) > ncol:
-                # Keep extra fields glued into the last column so nothing is lost
                 parts = parts[:ncol-1] + ["\t".join(parts[ncol-1:])]
 
             ws.append(parts)
@@ -656,16 +620,13 @@ try:
 
     wb = Workbook()
 
-    # variants sheet
     ws1 = wb.active
     ws1.title = "variants"
     tsv_to_sheet(ws1, sites_out)
 
-    # truncation sheet
     ws2 = wb.create_sheet("truncation")
     tsv_to_sheet(ws2, trunc_out)
 
-    # blast sheet
     ws3 = wb.create_sheet("blast")
     tsv_to_sheet(ws3, blast_out)
 
@@ -674,7 +635,6 @@ try:
 
 except Exception as e:
     print(f"WARNING: Could not write Excel summary ({excel_out}): {e}")
-
 
 # -----------------------
 # Status concatenation (Step1 + Step2)

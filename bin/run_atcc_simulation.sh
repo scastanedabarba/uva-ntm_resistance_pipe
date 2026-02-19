@@ -6,24 +6,21 @@ set -euo pipefail
 #
 # Wrapper to:
 #   1) Run simulation/make_site_mutants.sh to generate WT + mutant FASTAs
-#      (including deletion cases if added to make_site_mutants.sh)
-#   2) Submit a SLURM array job to simulate PERFECT (error-free) reads
-#      for each FASTA in <workdir>/atcc_dataset/refs/
-#   3) Submit an additional small SLURM array job to simulate LOW-COVERAGE
-#      reads for WT and one selected mutant (default: rrl_2270)
+#   2) Submit a SLURM array job to simulate reads for each FASTA in:
+#        <outdir>/atcc_dataset/refs/
+#   3) Submit a small SLURM array job to simulate LOW-COVERAGE reads
+#      for WT and one selected mutant (default: rrl_2270)
 #   4) Submit a mixing job to create mixed-allele read datasets (5% and 50%)
-#      by combining WT + mutant reads.
 #
 # Usage:
-#   bash run_atcc_simulation.sh --workdir /scratch/sgj4qr/mycobac_validation
+#   bash run_atcc_simulation.sh --outdir /scratch/.../my_atcc_run
 #
-# Optional env overrides for read simulation:
-#   PAIRS=1000000 READLEN=150 INSMEAN=300 INSSD=30 SEED=12345 FORCE=0
-#
-# Additional bundle overrides:
-#   PAIRS_LOWCOV=100000   (default)  # low coverage pairs for WT + mutant
-#   MIX_PAIRS=200000      (default)  # total pairs in mixed datasets
-#   MUT_FOR_MIX=rrl_2270  (default)  # mutant dataset name (without ATCC19977_)
+# This script writes:
+#   <outdir>/atcc_dataset/...
+# and a 1-column linelist:
+#   <outdir>/atcc_dataset/linelist.tsv
+# which can be used with:
+#   bash bin/submit_ntm_pipeline.sh <linelist.tsv> <outdir> --simulated <outdir>
 # ------------------------------------------------------------
 
 usage() {
@@ -31,10 +28,10 @@ usage() {
 run_atcc_simulation.sh
 
 USAGE:
-  bash run_atcc_simulation.sh --workdir <dir> [options]
+  bash run_atcc_simulation.sh --outdir <dir> [options]
 
 REQUIRED:
-  --workdir <dir>     Base working directory
+  --outdir <dir>      Output directory where atcc_dataset/ will be created
 
 OPTIONS:
   --chrom <name>      Contig name for make_site_mutants.sh (default: CU458896.1)
@@ -56,15 +53,15 @@ MINIMAL BUNDLE PARAMS (via environment variables):
 EOF
 }
 
-module load miniforge
+module load miniforge >/dev/null 2>&1 || true
 
-WORKDIR=""
+OUTDIR=""
 CHROM="CU458896.1"
 FORCE_READS=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --workdir) WORKDIR="${2:-}"; shift 2;;
+    --outdir) OUTDIR="${2:-}"; shift 2;;
     --chrom) CHROM="${2:-}"; shift 2;;
     --force_reads) FORCE_READS=1; shift 1;;
     -h|--help) usage; exit 0;;
@@ -72,8 +69,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -z "$WORKDIR" ]] && { echo "ERROR: --workdir required" >&2; usage >&2; exit 1; }
-WORKDIR="$(cd "$WORKDIR" && pwd)"
+[[ -z "$OUTDIR" ]] && { echo "ERROR: --outdir required" >&2; usage >&2; exit 1; }
+mkdir -p "$OUTDIR"
+OUTDIR="$(cd "$OUTDIR" && pwd)"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SIM_DIR="$REPO_ROOT/simulation"
@@ -104,8 +102,8 @@ if [[ "$FORCE_READS" -eq 1 ]]; then
 fi
 
 echo "=== ATCC simulation pipeline ==="
-echo "Workdir:      $WORKDIR"
-echo "Chrom:        $CHROM"
+echo "Outdir:      $OUTDIR"
+echo "Chrom:       $CHROM"
 echo
 echo "HIGH-COV:  PAIRS=$PAIRS READLEN=$READLEN INSMEAN=$INSMEAN INSSD=$INSSD SEED=$SEED FORCE=$FORCE"
 echo "LOW-COV:   PAIRS_LOWCOV=$PAIRS_LOWCOV (WT + ${MUT_FOR_MIX})"
@@ -116,12 +114,11 @@ echo
 # Step 1: generate mutant FASTAs + verification summary
 # ------------------------------------------------------------
 echo "== Step 1: Generating WT + mutant FASTAs =="
-bash "$SITE_MUTANTS" --workdir "$WORKDIR" --chrom "$CHROM"
+bash "$SITE_MUTANTS" --workdir "$OUTDIR" --chrom "$CHROM"
 
-REFSDIR="$WORKDIR/atcc_dataset/refs"
+REFSDIR="$OUTDIR/atcc_dataset/refs"
 [[ -d "$REFSDIR" ]] || { echo "ERROR: Expected refs dir not found: $REFSDIR" >&2; exit 1; }
 
-# Count FASTAs
 N_FASTA=$(ls -1 "$REFSDIR"/*.fasta 2>/dev/null | wc -l | awk '{print $1}')
 [[ "$N_FASTA" -gt 0 ]] || { echo "ERROR: No FASTAs found in $REFSDIR" >&2; exit 1; }
 
@@ -132,26 +129,24 @@ echo
 # ------------------------------------------------------------
 # Step 2a: submit SLURM array job to simulate HIGH-COV reads
 # ------------------------------------------------------------
-mkdir -p "$WORKDIR/slurm_logs"
+mkdir -p "$OUTDIR/slurm_logs"
 
 echo "== Step 2a: Submitting SLURM array job to simulate HIGH-COV reads =="
 echo "Submitting array: 1-$N_FASTA"
 echo "SLURM script: $SIM_SLURM"
 echo
 
-# Submit from WORKDIR so relative slurm_logs path works in the SBATCH header
-cd "$WORKDIR"
+cd "$OUTDIR"
 
 JOB_SUBMIT_OUT=$(
   sbatch \
-    --export=ALL,WORKDIR="$WORKDIR",PAIRS="$PAIRS",READLEN="$READLEN",INSMEAN="$INSMEAN",INSSD="$INSSD",SEED="$SEED",FORCE="$FORCE" \
+    --export=ALL,WORKDIR="$OUTDIR",PAIRS="$PAIRS",READLEN="$READLEN",INSMEAN="$INSMEAN",INSSD="$INSSD",SEED="$SEED",FORCE="$FORCE" \
     --array=1-"$N_FASTA" \
     "$SIM_SLURM"
 )
 
 echo "$JOB_SUBMIT_OUT"
 
-# Extract job id (expects: "Submitted batch job <id>")
 MAIN_JOBID="$(echo "$JOB_SUBMIT_OUT" | awk '{print $NF}')"
 if ! [[ "$MAIN_JOBID" =~ ^[0-9]+$ ]]; then
   echo "WARNING: Could not parse main job id from: $JOB_SUBMIT_OUT" >&2
@@ -165,11 +160,11 @@ if [[ -f "$SIM_LIST_SLURM" ]]; then
   echo
   echo "== Step 2b: Submitting LOW-COV simulation for WT + ${MUT_FOR_MIX} =="
 
-  LOWCOV_LIST="$WORKDIR/atcc_dataset/tmp/lowcov_fastas.txt"
+  LOWCOV_LIST="$OUTDIR/atcc_dataset/tmp/lowcov_fastas.txt"
   mkdir -p "$(dirname "$LOWCOV_LIST")"
 
-  WT_FA="$WORKDIR/atcc_dataset/refs/ATCC19977_WT.fasta"
-  MUT_FA="$WORKDIR/atcc_dataset/refs/ATCC19977_${MUT_FOR_MIX}.fasta"
+  WT_FA="$OUTDIR/atcc_dataset/refs/ATCC19977_WT.fasta"
+  MUT_FA="$OUTDIR/atcc_dataset/refs/ATCC19977_${MUT_FOR_MIX}.fasta"
 
   [[ -f "$WT_FA" ]]  || { echo "ERROR: WT FASTA missing: $WT_FA" >&2; exit 1; }
   [[ -f "$MUT_FA" ]] || { echo "ERROR: Mutant FASTA missing: $MUT_FA (set MUT_FOR_MIX?)" >&2; exit 1; }
@@ -181,7 +176,7 @@ if [[ -f "$SIM_LIST_SLURM" ]]; then
 
   LOW_JOB_OUT=$(
     sbatch \
-      --export=ALL,WORKDIR="$WORKDIR",FASTA_LIST="$LOWCOV_LIST",PAIRS="$PAIRS_LOWCOV",READLEN="$READLEN",INSMEAN="$INSMEAN",INSSD="$INSSD",SEED="$SEED",FORCE="$FORCE",SUFFIX="lowcov" \
+      --export=ALL,WORKDIR="$OUTDIR",FASTA_LIST="$LOWCOV_LIST",PAIRS="$PAIRS_LOWCOV",READLEN="$READLEN",INSMEAN="$INSMEAN",INSSD="$INSSD",SEED="$SEED",FORCE="$FORCE",SUFFIX="lowcov" \
       --array=1-2 \
       "$SIM_LIST_SLURM"
   )
@@ -198,18 +193,17 @@ if [[ -f "$MIX_SLURM" ]]; then
   echo
   echo "== Step 3: Submitting read-mixing job (5% and 50%) =="
 
-  # If we have a job id, use dependency so we only mix after reads exist
   if [[ -n "$MAIN_JOBID" ]]; then
     MIX_OUT=$(
       sbatch \
         --dependency=afterok:"$MAIN_JOBID" \
-        --export=ALL,WORKDIR="$WORKDIR",WT_DATASET="WT",MUT_DATASET="$MUT_FOR_MIX",MIX_PAIRS="$MIX_PAIRS",SEED="$SEED",FORCE="$FORCE" \
+        --export=ALL,WORKDIR="$OUTDIR",WT_DATASET="WT",MUT_DATASET="$MUT_FOR_MIX",MIX_PAIRS="$MIX_PAIRS",SEED="$SEED",FORCE="$FORCE" \
         "$MIX_SLURM"
     )
   else
     MIX_OUT=$(
       sbatch \
-        --export=ALL,WORKDIR="$WORKDIR",WT_DATASET="WT",MUT_DATASET="$MUT_FOR_MIX",MIX_PAIRS="$MIX_PAIRS",SEED="$SEED",FORCE="$FORCE" \
+        --export=ALL,WORKDIR="$OUTDIR",WT_DATASET="WT",MUT_DATASET="$MUT_FOR_MIX",MIX_PAIRS="$MIX_PAIRS",SEED="$SEED",FORCE="$FORCE" \
         "$MIX_SLURM"
     )
   fi
@@ -220,9 +214,9 @@ else
 fi
 
 # ------------------------------------------------------------
-# Minimal add: write 1-column linelist from refs/*.fasta (reads may not exist yet)
+# Write 1-column linelist (dataset names) from refs/*.fasta
 # ------------------------------------------------------------
-LINELIST_OUT="$WORKDIR/atcc_dataset/linelist.tsv"
+LINELIST_OUT="$OUTDIR/atcc_dataset/linelist.tsv"
 
 {
   echo -e "isolate"
@@ -240,8 +234,10 @@ LINELIST_OUT="$WORKDIR/atcc_dataset/linelist.tsv"
 echo
 echo "Wrote linelist: $LINELIST_OUT"
 echo
-
 echo "Done submitting jobs."
-echo "Reads will be written to: $WORKDIR/atcc_dataset/reads/"
-echo "Logs: $WORKDIR/slurm_logs/ (and/or slurm_logs/ relative to submission dir)"
+echo "Reads will be written to: $OUTDIR/atcc_dataset/reads/"
+echo "Logs: $OUTDIR/slurm_logs/ (and/or slurm_logs/ relative to submission dir)"
+echo
+echo "Next step (run pipeline on simulated reads):"
+echo "  bash $REPO_ROOT/bin/submit_ntm_pipeline.sh $LINELIST_OUT $OUTDIR --simulated $OUTDIR"
 

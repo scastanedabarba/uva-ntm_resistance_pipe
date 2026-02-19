@@ -10,18 +10,16 @@
 
 set -euo pipefail
 
-if [[ $# -lt 4 ]]; then
+if [[ $# -lt 3 ]]; then
   echo "USAGE:"
-  echo "  sbatch 03_compile_and_interpret.slurm <workdir> <outdir> <linelist> <targets_fasta> [only_isolate] [ref_contig]"
+  echo "  sbatch 03_compile_and_interpret.slurm <outdir> <linelist> <targets_fasta> [ref_contig]"
   exit 2
 fi
 
-WORKDIR="$1"
-OUTDIR="$2"
-LINELIST="$3"
-TARGETS_FASTA="$4"
-ONLY_ISO="${5:-}"
-REF_CONTIG="${6:-CU458896.1}"
+OUTDIR="$1"
+LINELIST="$2"
+TARGETS_FASTA="$3"
+REF_CONTIG="${4:-CU458896.1}"
 
 # Resolve python script from WORKDIR/scripts
 : "${REPO_ROOT:?ERROR: REPO_ROOT env var not set (export from controller)}"
@@ -45,9 +43,10 @@ python3 "$PY_SCRIPT" \
   -o "$OUTDIR" \
   -l "$LINELIST" \
   -f "$TARGETS_FASTA" \
-  ${ONLY_ISO:+-s "$ONLY_ISO"} \
   -r "$REF_CONTIG"
 
 python3 "$PY_SCRIPT2" \
   --outdir "$OUTDIR" \
-  --ref-fasta "${REPO_ROOT%/}/references/ATCC19977.fasta"
+  --linelist "$LINELIST" \
+  --ref-fasta "${REPO_ROOT%/}/references/ATCC19977.fasta" \
+

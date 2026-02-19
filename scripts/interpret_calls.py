@@ -23,17 +23,12 @@ ALL_SITES = (
     [("rrs", p) for p in RRS_SITES]
 )
 
-# Truncation rule
 TRUNC_RATIO_CUTOFF = 0.10
 
-# erm gene detection notes (as requested)
 ERM39_NOTE = "erm39 detected; may confer macrolide resistance in M. fortuitum"
 ERM55_NOTE = "erm55 detected; may confer macrolide resistance in M. chelonae"
 
 
-# -----------------------------
-# Small utils
-# -----------------------------
 def safe_float(x: str) -> float:
     try:
         return float(x)
@@ -58,10 +53,28 @@ def read_tsv(path: str) -> List[List[str]]:
             rows.append(line.split("\t"))
     return rows
 
+def read_isolates_from_linelist(path: str) -> List[str]:
+    """
+    Accept CSV or TSV. Header optional.
+    Uses first column as isolate.
+    """
+    isolates: List[str] = []
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if "\t" in line:
+                parts = line.split("\t")
+            else:
+                parts = line.split(",")
+            iso = parts[0].strip()
+            if iso.lower() in ("isolate", "#isolate"):
+                continue
+            isolates.append(iso)
+    return isolates
+
 def read_depth_tsv(depth_tsv: str, ref_contig: str) -> Dict[int, int]:
-    """
-    samtools depth output: CHROM POS DEPTH
-    """
     d: Dict[int, int] = {}
     if not os.path.exists(depth_tsv) or os.path.getsize(depth_tsv) == 0:
         return d
@@ -83,10 +96,6 @@ def read_depth_tsv(depth_tsv: str, ref_contig: str) -> Dict[int, int]:
     return d
 
 def fasta_load_first_contig(path: str) -> Tuple[str, str]:
-    """
-    Load the first contig sequence from a FASTA.
-    Returns (contig_name, sequence_upper).
-    """
     name: Optional[str] = None
     seq_parts: List[str] = []
     with open(path, "r") as f:
@@ -118,15 +127,7 @@ def site_ref_pos(gene: str, pos_gene: int) -> int:
     return GENE_STARTS[gene] + (pos_gene - 1)
 
 
-# -----------------------------
-# Parse inputs
-# -----------------------------
 def parse_sites_evidence(path: str) -> Dict[Tuple[str, str, int], dict]:
-    """
-    sites_evidence.tsv columns (current):
-    Isolate Gene position Depth REF ALT QUAL DP AD AF
-    Returns dict keyed by (isolate, gene, pos_gene) -> row dict
-    """
     out: Dict[Tuple[str, str, int], dict] = {}
     rows = read_tsv(path)
     if not rows:
@@ -150,10 +151,6 @@ def parse_sites_evidence(path: str) -> Dict[Tuple[str, str, int], dict]:
     return out
 
 def parse_trunc_metrics(path: str) -> Dict[str, dict]:
-    """
-    erm41_truncation_metrics.tsv columns:
-    Isolate ... del_to_flank_ratio erm41_callable
-    """
     out: Dict[str, dict] = {}
     rows = read_tsv(path)
     if not rows:
@@ -173,12 +170,6 @@ def parse_trunc_metrics(path: str) -> Dict[str, dict]:
 def parse_blast_top_hits(path: str,
                          pident_cutoff: float,
                          qcov_cutoff: float) -> Dict[Tuple[str, str], bool]:
-    """
-    blast_top_hits.tsv columns include:
-    Isolate GeneGroup Pident QcovPct ...
-    We'll call detected if Pident>=cutoff and QcovPct>=cutoff.
-    Returns dict keyed by (isolate, gene_group) -> detected(True/False)
-    """
     detected: Dict[Tuple[str, str], bool] = {}
     rows = read_tsv(path)
     if not rows:
@@ -205,11 +196,8 @@ def parse_blast_top_hits(path: str,
     return detected
 
 
-# -----------------------------
-# Calling primitives
-# -----------------------------
 def site_state_from_variant(af: float) -> str:
-    if af != af:  # nan
+    if af != af:
         return "WT"
     if af >= 0.90:
         return "MUT"
@@ -223,9 +211,6 @@ def call_rrl_rrs_site(iso: str,
                       dp_min: int,
                       site_map: Dict[Tuple[str, str, int], dict],
                       depths_ref: Dict[int, int]) -> str:
-    """
-    Return WT/MUT/MIXED/INDETERMINATE for rrl/rrs.
-    """
     refpos = site_ref_pos(gene, pos_gene)
     depth = depths_ref.get(refpos, 0)
     if depth < dp_min:
@@ -244,9 +229,6 @@ def call_erm41_base(iso: str,
                     site_map: Dict[Tuple[str, str, int], dict],
                     depths_ref: Dict[int, int],
                     ref_seq: str) -> str:
-    """
-    Return C/T or MIXED or N for erm41 positions (19,28).
-    """
     refpos = site_ref_pos("erm41", pos_gene)
     depth = depths_ref.get(refpos, 0)
     if depth < dp_min:
@@ -277,21 +259,11 @@ def call_erm41_truncation(iso: str, trunc_map: Dict[str, dict]) -> str:
     return "NOT_TRUNCATED"
 
 
-# -----------------------------
-# Interpretation
-# -----------------------------
 def interpret_clarithro(iso: str,
                         rrl_calls: Dict[int, str],
                         erm41_trunc: str,
                         erm41_19: str,
                         erm41_28: str) -> Tuple[str, str]:
-    """
-    Decision tree:
-      - rrl MUT => Resistant
-      - rrl MIXED => evaluate erm41 if applicable; else Resistance possible (rrl mixed)
-      - rrl WT => evaluate erm41 truncation / bases if applicable; otherwise do not force Indeterminate
-    """
-    # rrl dominates: any MUT
     for pos in RRL_SITES:
         if rrl_calls.get(pos) == "MUT":
             return ("Resistant", f"Resistant; mutation at rrl position {pos}")
@@ -300,7 +272,6 @@ def interpret_clarithro(iso: str,
     any_rrl_indet = any(rrl_calls.get(p) == "INDETERMINATE" for p in RRL_SITES)
 
     def erm41_resistance_evidence() -> Optional[str]:
-        # Only meaningful if NOT_TRUNCATED and bases callable
         if erm41_trunc != "NOT_TRUNCATED":
             return None
         if erm41_28 == "MIXED":
@@ -318,7 +289,6 @@ def interpret_clarithro(iso: str,
                 return None
         return None
 
-    # If rrl MIXED, still check erm41 (if applicable); otherwise fall back to rrl mixed
     if any_rrl_mixed_pos is not None:
         ev = erm41_resistance_evidence()
         if ev == "RES_19":
@@ -329,7 +299,6 @@ def interpret_clarithro(iso: str,
             return ("Resistance possible", "Resistance possible; mixed genotype at erm41 position 19")
         return ("Resistance possible", f"Resistance possible; mixed genotype at rrl position {any_rrl_mixed_pos}")
 
-    # If rrl not callable anywhere, we keep indeterminate (unless erm41 provides a decisive call)
     if any_rrl_indet:
         if erm41_trunc == "TRUNCATED":
             return ("Susceptible", "Susceptible; erm41 truncated")
@@ -350,7 +319,6 @@ def interpret_clarithro(iso: str,
                 if erm41_19 == "T":
                     return ("Susceptible", "Susceptible; erm41 full-length with 28=T and 19=T")
 
-        # If erm41 not applicable, don't try to rescue an indeterminate rrl case
         if erm41_trunc == "NOT_APPLICABLE":
             return ("Indeterminate", "Indeterminate; rrl not callable")
 
@@ -359,8 +327,6 @@ def interpret_clarithro(iso: str,
 
         return ("Indeterminate", "Indeterminate; rrl not callable")
 
-    # rrl WT/callable:
-    # If erm41 not applicable, do NOT force Indeterminate. (No special reason text requested.)
     if erm41_trunc == "NOT_APPLICABLE":
         return ("Susceptible", "Susceptible")
 
@@ -369,7 +335,6 @@ def interpret_clarithro(iso: str,
     if erm41_trunc == "INDETERMINATE":
         return ("Indeterminate", "Indeterminate; erm41 not callable for truncation assessment")
 
-    # NOT_TRUNCATED
     if erm41_28 == "MIXED":
         return ("Resistance possible", "Resistance possible; mixed genotype at erm41 position 28")
     if erm41_28 == "N":
@@ -400,12 +365,10 @@ def interpret_amikacin(iso: str, rrs_calls: Dict[int, str]) -> Tuple[str, str]:
     return ("Susceptible", "Susceptible; all rrs target sites WT with adequate depth")
 
 
-# -----------------------------
-# Main
-# -----------------------------
 def main():
     ap = argparse.ArgumentParser(description="Step4 interpret: compile per-isolate calls for clarithromycin/amikacin + notes.")
     ap.add_argument("--outdir", required=True, help="Pipeline output root (contains per-isolate subdirs + summary/)")
+    ap.add_argument("--linelist", required=True, help="Linelist (CSV or TSV). Isolate must be in first column.")
     ap.add_argument("--ref-fasta", default="", help="Reference FASTA used for mapping (default: <outdir>/scripts/ATCC19977.fasta)")
     ap.add_argument("--ref-contig", default="CU458896.1", help="Reference contig name in targets_depth.tsv (default: CU458896.1)")
     ap.add_argument("--dp-min", type=int, default=30, help="Depth threshold for site callability (default: 30)")
@@ -430,15 +393,7 @@ def main():
     trunc_map = parse_trunc_metrics(trunc_path)
     blast_detect = parse_blast_top_hits(blast_path, args.blast_pident, args.blast_qcov)
 
-    # Determine isolates to report:
-    isolates: List[str] = []
-    if trunc_map:
-        isolates = sorted(trunc_map.keys())
-    else:
-        for name in sorted(os.listdir(outdir)):
-            p = os.path.join(outdir, name, "variants", "targets_depth.tsv")
-            if os.path.exists(p):
-                isolates.append(name)
+    isolates = read_isolates_from_linelist(args.linelist)
 
     out_tsv = os.path.join(summary_dir, "interpretation.tsv")
 
@@ -461,16 +416,13 @@ def main():
             depth_path = os.path.join(outdir, iso, "variants", "targets_depth.tsv")
             depths = read_depth_tsv(depth_path, args.ref_contig)
 
-            # erm detection (BLAST)
             erm41_blast = blast_detect.get((iso, "erm41"), False)
             erm39 = "Y" if blast_detect.get((iso, "erm39"), False) else "N"
             erm55 = "Y" if blast_detect.get((iso, "erm55"), False) else "N"
 
-            # NEW: erm41 applicability gate (coverage primary, BLAST fallback)
             erm41_cov_callable = trunc_map.get(iso, {}).get("callable", False)
             erm41_applicable = bool(erm41_cov_callable or erm41_blast)
 
-            # Call truncation / bases:
             if not erm41_applicable:
                 erm41_trunc = "NOT_APPLICABLE"
                 erm41_19 = "NA"
@@ -480,15 +432,12 @@ def main():
                 erm41_19 = call_erm41_base(iso, 19, args.dp_min, site_map, depths, ref_seq)
                 erm41_28 = call_erm41_base(iso, 28, args.dp_min, site_map, depths, ref_seq)
 
-            # Call rrl/rrs states
             rrl_calls: Dict[int, str] = {p: call_rrl_rrs_site(iso, "rrl", p, args.dp_min, site_map, depths) for p in RRL_SITES}
             rrs_calls: Dict[int, str] = {p: call_rrl_rrs_site(iso, "rrs", p, args.dp_min, site_map, depths) for p in RRS_SITES}
 
-            # Drug calls
             clar_call, clar_reason = interpret_clarithro(iso, rrl_calls, erm41_trunc, erm41_19, erm41_28)
             amk_call, amk_reason = interpret_amikacin(iso, rrs_calls)
 
-            # Notes + overrides (unchanged)
             notes: List[str] = []
             if erm39 == "Y":
                 notes.append(ERM39_NOTE)

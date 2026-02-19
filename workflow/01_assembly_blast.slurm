@@ -94,7 +94,21 @@ SPADES_CMD=(spades.py --isolate --cov-cutoff auto -1 "$R1FASTQ" -2 "$R2FASTQ")
 if [[ -s "$SEFASTQ" ]]; then
   SPADES_CMD+=(-s "$SEFASTQ")
 fi
-SPADES_CMD+=(-t "$THREADS" -o "$ASM_DIR")
+
+# Prefer SLURM-provided memory (MB). Convert to GB and leave a tiny cushion.
+if [[ -n "${SLURM_MEM_PER_NODE:-}" ]]; then
+  SPADES_MEM_GB=$(( SLURM_MEM_PER_NODE / 1024 ))
+  # leave 2 GB headroom (avoid OOM due to minor overhead)
+  if (( SPADES_MEM_GB > 4 )); then
+    SPADES_MEM_GB=$(( SPADES_MEM_GB - 2 ))
+  fi
+else
+  # Fallback: set to what your job is supposed to have (adjust if your SBATCH mem differs)
+  SPADES_MEM_GB=62
+fi
+
+SPADES_CMD+=(-t "$THREADS" -m "$SPADES_MEM_GB" -o "$ASM_DIR")
+# ---------------------------------------------------------------
 
 if "${SPADES_CMD[@]}" > "${LOG_DIR}/spades.${ISOLATE}.out" 2> "${LOG_DIR}/spades.${ISOLATE}.err"; then
   echo -e "${ISOLATE}\tSPADES\tOK\tAssembly completed" >> "$STATUS_TSV"
@@ -108,6 +122,7 @@ if [[ ! -s "$CONTIGS" ]]; then
   echo -e "${ISOLATE}\tSPADES\tFAIL\tcontigs.fasta missing/empty" >> "$STATUS_TSV"
   exit 0
 fi
+
 
 # ---------------------------
 # 2) BLAST (targets as query vs contigs as db)

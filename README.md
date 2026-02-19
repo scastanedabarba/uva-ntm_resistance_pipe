@@ -1,287 +1,190 @@
-# UVA Mycobacterial Resistance Pipeline
+# UVA NTM Resistance Pipeline
 
-## Overview
+## Purpose
 
-This pipeline performs:
+uva-ntm_resistance_pipe is a reproducible SLURM-based pipeline for detecting macrolide
+and aminoglycoside resistance in *Mycobacterium abscessus* using whole
+genome sequencing data.
 
-1. Assembly + BLAST detection of erm genes  
-2. Targeted variant calling (rrl, rrs, erm41)  
-3. Coverage-based erm41 truncation assessment  
-4. Interpretation of clarithromycin and amikacin resistance  
+The pipeline performs:
 
-It supports:
-- Clinical isolates
-- Simulated ATCC19977 datasets
+1.  Assembly (SPAdes)
+2.  Target gene BLAST detection
+3.  Reference mapping (ATCC 19977)
+4.  Variant calling at resistance-associated loci
+5.  erm41 truncation detection (coverage-based)
+6.  Structured drug resistance interpretation
 
----
+Primary outputs include variant evidence tables, gene detection
+summaries, truncation metrics, and final antibiotic interpretations.
 
-# ⚠️ IMPORTANT: Simulation vs Pipeline
+------------------------------------------------------------------------
 
-## Simulation DOES NOT run the pipeline
+# Installation
 
-Running the simulation scripts **only generates synthetic FASTQ datasets**.
+## 1) Clone Repository
 
-It does NOT:
-- assemble reads
-- call variants
-- generate resistance predictions
+    git clone https://github.com/<scastanedabarba>/uva-ntm_resistance_pipe.git
+    cd mycobac_validation
 
-After simulation, you must run the full pipeline on the simulated dataset.
+## 2) Required Software
 
----
+Tested on UVA Rivanna.
 
-# Part 1 – Generate Simulated Dataset (Optional)
+-   SPAdes ≥ 4.2.0\
+-   bwa ≥ 0.7.17\
+-   samtools ≥ 1.15\
+-   bcftools ≥ 1.15\
+-   BLAST+\
+-   Python ≥ 3.9
 
-Example:
+### Python Packages
 
-```bash
-bash simulation/run_atcc_sim_pipeline.sh \
-  --outdir /scratch/sgj4qr/atcc_sim_test \
-  --coverage 100
+-   openpyxl\
+-   matplotlib
+
+------------------------------------------------------------------------
+
+# Clinical Dataset (Primary Use Case)
+
+## Required Inputs
+
+-   Linelist (CSV or TSV)
+-   Trimmed paired-end reads located at:
+
+```{=html}
+<!-- -->
 ```
+    /project/amr_services/qc/<run>/<isolate>/<isolate>_R1.trim.fq.gz
+    /project/amr_services/qc/<run>/<isolate>/<isolate>_R2.trim.fq.gz
 
-This generates:
+## Example Linelist
 
-```
-/scratch/sgj4qr/atcc_sim_test/
-    isolate1/
-        isolate1_R1.fastq.gz
-        isolate1_R2.fastq.gz
-    isolate2/
-    ...
-```
+Two-column format:
 
-This step only creates FASTQs.
+    isolate run
+    VALID_0001  251216_M70741_0293_000000000-M84N5
+    VALID_0002  251216_M70741_0293_000000000-M84N5
 
----
+## Run Pipeline
 
-# Part 2 – Run the Pipeline
+    bash bin/submit_ntm_pipeline.sh linelist.tsv /path/to/output
 
-## Clinical dataset
+------------------------------------------------------------------------
 
-```bash
-bash submit_ntm_pipeline.sh \
-  linelist.tsv \
-  /scratch/sgj4qr/myco_run
-```
+# Reference Genome and Coordinate System
 
-## Simulated dataset
+All mapping is performed against:
 
-```bash
-bash submit_ntm_pipeline.sh \
-  linelist.tsv \
-  /scratch/sgj4qr/atcc_sim_test
-```
+**Mycobacterium abscessus ATCC 19977**\
+GenBank: CU458896.1\
+Associated assembly: OQ656457.1
 
-Where:
-- `linelist.tsv` contains isolate IDs (first column only)
-- `outdir` is the root pipeline directory
+## Gene Coordinates (1-based reference positions)
 
----
+-   rrs: 1,462,398 -- 1,463,901\
+-   rrl: 1,464,208 -- 1,467,319\
+-   erm41: 2,345,955 -- 2,346,476
 
-# Pipeline Structure
+## Site-of-Interest Positions (Gene-Relative)
 
-For each isolate:
+These are **1-based positions relative to the start of each gene**, not
+genome coordinates:
 
-```
-outdir/
-  ISOLATE/
-    assembly/
-    blast/
-    mapping/
-    variants/
-    status_step1.tsv
-    status_step2.tsv
-```
+-   rrl: 2269, 2270, 2271, 2281, 2293
+-   rrs: 1373, 1375, 1376, 1458
+-   erm41: 19, 28
 
----
+Internal conversion:
 
-# Output Files Explained
+    reference_position = gene_start + (gene_position - 1)
 
-All final outputs are written to:
+This ensures reproducibility and removes ambiguity between gene-relative
+and genome-relative numbering.
 
-```
-outdir/summary/
-```
-
----
-
-## 1️⃣ blast_top_hits.tsv
-
-Summarizes top BLAST hit per gene group:
-
-- erm41
-- erm39
-- erm55
-
-Columns:
-- Pident
-- QcovPct
-- TotalHits
-- PreferredHits (≥90% identity AND ≥90% coverage)
-
-Used for:
-- Detecting erm39 / erm55
-- erm41 presence (fallback if coverage insufficient)
-
----
-
-## 2️⃣ sites_evidence.tsv
-
-Contains only variant sites observed at positions of interest:
-
-| Gene  | Position     | Meaning |
-|--------|-------------|---------|
-| rrl    | 2269–2293   | Macrolide resistance mutations |
-| rrs    | 1373–1458   | Amikacin resistance mutations |
-| erm41  | 19, 28      | Inducible macrolide resistance genotype |
-
-Columns:
-- Depth (reference coordinate depth)
-- REF
-- ALT
-- DP
-- AD
-- AF (allele frequency)
-
-Allele Frequency logic:
-- ≥0.90 → MUT
-- 0.10–0.89 → MIXED
-- <0.10 → WT
-
----
-
-## 3️⃣ erm41_truncation_metrics.tsv
-
-Coverage-based truncation assessment.
-
-Key column:
-- `del_to_flank_ratio`
-
-Logic:
-If flank median depth ≥ threshold AND  
-   deletion-region median depth / flank median depth ≤ 0.10  
-→ TRUNCATED  
-Else → NOT_TRUNCATED  
-
-If flanks not callable → INDETERMINATE
-
----
-
-## 4️⃣ interpretation.tsv  ⭐ Final Calls
-
-Columns include:
-
-- clarithromycin_call
-- clarithromycin_reason
-- amikacin_call
-- amikacin_reason
-- Individual site states
-- erm41_truncation
-- erm39_detected
-- erm55_detected
-- notes
-
-This is the authoritative final output.
-
----
+------------------------------------------------------------------------
 
 # Interpretation Logic
 
 ## Clarithromycin
 
-Priority order:
-
-1. Any rrl MUT → Resistant  
-2. rrl MIXED → Resistance possible  
-3. rrl WT → evaluate erm41  
-
-If erm41:
-
-- TRUNCATED → Susceptible  
-- NOT_TRUNCATED:
-  - 28 = C → Susceptible  
-  - 28 = T & 19 = C → Resistant  
-  - Mixed → Resistance possible  
-
-erm39 / erm55 detected:
-→ Forces "Resistance possible" unless already Resistant
-
----
+1.  rrl mutation → Resistant
+2.  rrl mixed → Resistance possible
+3.  rrl WT → evaluate erm41:
+    -   Truncated → Susceptible
+    -   Full-length + 28=C → Susceptible
+    -   Full-length + 28=T + 19=C → Resistant
+    -   Mixed at 28 or 19 → Resistance possible
 
 ## Amikacin
 
-- Any rrs MUT → Resistant  
-- Mixed → Resistance possible  
-- Low depth → Indeterminate  
-- Otherwise → Susceptible  
+1.  rrs mutation → Resistant
+2.  rrs mixed → Resistance possible
+3.  Insufficient depth → Indeterminate
+4.  All WT → Susceptible
 
----
+------------------------------------------------------------------------
 
-# Excel Summary
+# Output Files
 
-```
+summary/blast_top_hits.tsv\
+summary/sites_evidence.tsv\
+summary/erm41_truncation_metrics.tsv\
+summary/interpretation.tsv\
 summary/myco_prediction_summary.xlsx
-```
 
-Tabs:
-- variants
-- truncation
-- blast
+The Excel file aggregates variant, truncation, and BLAST summaries for
+review but TSV files remain the primary reproducible outputs.
 
-Convenience file only — interpretation.tsv is authoritative.
+------------------------------------------------------------------------
 
----
+# Simulated ATCC Dataset
 
-# Status Tracking
+## Purpose
 
-Each isolate contains:
+The simulation dataset is used for validation and benchmarking. It
+generates:
 
-## status_step1.tsv
-Assembly + BLAST
+-   WT reference
+-   Point mutants
+-   Deletion mutants
+-   Mixed allele datasets
+-   High and low coverage reads
 
-## status_step2.tsv
-Mapping + variant calling
+## Step 1 -- Generate Dataset
 
----
+    bash bin/run_atcc_simulation.sh --outdir /path/to/output
 
-# Rerunning Failed Isolates
+This creates:
 
-If an isolate failed:
+    /path/to/output/atcc_dataset/
 
-```bash
-bash submit_ntm_pipeline.sh \
-  linelist.tsv \
-  /scratch/sgj4qr/myco_run \
-  --isolate ISOLATE_ID
-```
+This step **only generates data**. It does not run resistance analysis.
 
-This reruns only that isolate.
+## Step 2 -- Run Pipeline on Simulation
 
----
+    bash bin/submit_ntm_pipeline.sh \
+      /path/to/output/atcc_dataset/linelist.tsv \
+      /path/to/output \
+      --simulated
 
-# Rerun Only Summary + Interpretation
+The --simulated flag instructs the pipeline to use:
 
-After fixing failed isolates:
+    <outdir>/atcc_dataset/reads/<isolate>/
 
-```bash
-sbatch \
-  --export=ALL,REPO_ROOT=/scratch/sgj4qr/mycobac_validation/scripts \
-  workflow/03_compile_and_interpret.slurm \
-  /scratch/sgj4qr/myco_run \
-  linelist.tsv \
-  references/nucleotide.fna \
-  CU458896.1
-```
+instead of the clinical QC path.
 
-This regenerates:
+------------------------------------------------------------------------
 
-- blast_top_hits.tsv
-- sites_evidence.tsv
-- erm41_truncation_metrics.tsv
-- interpretation.tsv
-- myco_prediction_summary.xlsx
-- combined status tables
+# References
 
-No re-assembly occurs.
+ATCC 19977 chromosome: CU458896.1, OQ656457.1\
+erm55: OQ656455.1, OQ656456.1, OQ656457.1\
+erm39: AY487229.1
 
+Key literature: -
+https://www.sciencedirect.com/science/article/pii/S0167701217302749 -
+https://www.sciencedirect.com/science/article/pii/S1525157821002592
+
+Software used: - SPAdes - BWA - SAMtools - BCFtools - BLAST+ - Python
+(Biopython, openpyxl)

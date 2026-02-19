@@ -24,7 +24,7 @@ summaries, truncation metrics, and final antibiotic interpretations.
 
 ## 1) Clone Repository
 
-    git clone https://github.com/<scastanedabarba>/uva-ntm_resistance_pipe.git
+    git clone https://github.com/scastanedabarba/uva-ntm_resistance_pipe.git
     cd mycobac_validation
 
 ## 2) Required Software

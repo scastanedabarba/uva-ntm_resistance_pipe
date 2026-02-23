@@ -25,7 +25,7 @@ Primary outputs include variant evidence tables, gene detection summaries, trunc
 
 ```bash
 git clone https://github.com/scastanedabarba/uva-ntm_resistance_pipe.git
-cd mycobac_validation
+cd uva-ntm_resistance_pipe
 ```
 
 ## 2) Required Software

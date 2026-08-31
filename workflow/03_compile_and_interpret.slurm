@@ -36,16 +36,16 @@ if [[ ! -s "$PY_SCRIPT2" ]]; then
   exit 2
 fi
 
-module load miniforge
-module load biopython
+source "$REPO_ROOT/config/setup_environment.sh"
+setup_python_env
 
-python3 "$PY_SCRIPT" \
+"$NTM_PYTHON" "$PY_SCRIPT" \
   -o "$OUTDIR" \
   -l "$LINELIST" \
   -f "$TARGETS_FASTA" \
   -r "$REF_CONTIG"
 
-python3 "$PY_SCRIPT2" \
+"$NTM_PYTHON" "$PY_SCRIPT2" \
   --outdir "$OUTDIR" \
   --linelist "$LINELIST" \
   --ref-fasta "${REPO_ROOT%/}/references/ATCC19977.fasta" \

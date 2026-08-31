@@ -31,12 +31,18 @@ PIPE_OUTDIR="${5:?Missing outdir}"
 THREADS="${SLURM_CPUS_PER_TASK:-16}"
 
 # ---------------------------
-# Modules
+# Environment
 # ---------------------------
-module use /project/amr_services/modulefiles/
-module load bwa
-module load samtools
-module load bcftools
+: "${REPO_ROOT:?ERROR: REPO_ROOT env var not set (export from controller)}"
+
+ENV_CONFIG="$REPO_ROOT/config/setup_environment.sh"
+
+[[ -f "$ENV_CONFIG" ]] || {
+    echo "ERROR: Environment config not found: $ENV_CONFIG" >&2
+    exit 1
+}
+source "$ENV_CONFIG"
+setup_mapping_env
 
 # ---------------------------
 # Reference

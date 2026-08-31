@@ -2,13 +2,17 @@
 #SBATCH --job-name=mix_reads
 #SBATCH --output=slurm_logs/mix_reads_%j.out
 #SBATCH --error=slurm_logs/mix_reads_%j.err
-#SBATCH --account=amr_services
+#SBATCH --account=amr_services_paid
 #SBATCH --partition=standard
 #SBATCH --time=02:00:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
 
 set -euo pipefail
+
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+source "$REPO_ROOT/config/setup_environment.sh"
+setup_python_env
 
 : "${WORKDIR:?ERROR: Set WORKDIR env var}"
 
@@ -46,7 +50,7 @@ mix_one() {
   fi
 
   local k_mut k_wt
-  k_mut=$(python3 - <<PY
+  k_mut=$("$NTM_PYTHON" - <<PY
 import math
 print(int(round($MIX_PAIRS * float("$frac"))))
 PY
@@ -57,7 +61,7 @@ PY
 
   echo "Mixing $outname: total_pairs=$MIX_PAIRS mut_pairs=$k_mut wt_pairs=$k_wt"
 
-  python3 - "$wt_dir" "$mut_dir" "$outdir" "$outname" "$k_wt" "$k_mut" "$SEED" <<'PY'
+  "$NTM_PYTHON" - "$wt_dir" "$mut_dir" "$outdir" "$outname" "$k_wt" "$k_mut" "$SEED" <<'PY'
 import gzip, os, random, sys
 from pathlib import Path
 

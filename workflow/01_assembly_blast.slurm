@@ -36,11 +36,18 @@ R2FASTQ="${4:?Missing R2}"
 PIPE_OUTDIR="${5:?Missing outdir}"
 
 # ---------------------------
-# Modules
+# Environment
 # ---------------------------
-module use /project/amr_services/modulefiles/
-module load spades/4.2.0
-module load blast/2.17.0
+: "${REPO_ROOT:?ERROR: REPO_ROOT env var not set (export from controller)}"
+
+ENV_CONFIG="$REPO_ROOT/config/setup_environment.sh"
+
+[[ -f "$ENV_CONFIG" ]] || {
+    echo "ERROR: Environment config not found: $ENV_CONFIG" >&2
+    exit 1
+}
+source "$ENV_CONFIG"
+setup_assembly_blast_env
 
 # ---------------------------
 # Outputs

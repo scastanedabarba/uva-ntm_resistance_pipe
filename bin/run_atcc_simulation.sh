@@ -23,6 +23,12 @@ set -euo pipefail
 #   bash bin/submit_ntm_pipeline.sh <linelist.tsv> <outdir> --simulated <outdir>
 # ------------------------------------------------------------
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# ------------------------------------------------------------
+# Shared environment
+# ------------------------------------------------------------
+source "$REPO_ROOT/config/setup_environment.sh"
+
 usage() {
   cat <<'EOF'
 run_atcc_simulation.sh
@@ -52,8 +58,6 @@ MINIMAL BUNDLE PARAMS (via environment variables):
   MUT_FOR_MIX  (default rrl_2270) # dataset name in reads/ and refs/ (no ATCC19977_ prefix)
 EOF
 }
-
-module load miniforge >/dev/null 2>&1 || true
 
 OUTDIR=""
 CHROM="CU458896.1"
@@ -140,11 +144,10 @@ cd "$OUTDIR"
 
 JOB_SUBMIT_OUT=$(
   sbatch \
-    --export=ALL,WORKDIR="$OUTDIR",PAIRS="$PAIRS",READLEN="$READLEN",INSMEAN="$INSMEAN",INSSD="$INSSD",SEED="$SEED",FORCE="$FORCE" \
+    --export=ALL,REPO_ROOT="$REPO_ROOT",WORKDIR="$OUTDIR",PAIRS="$PAIRS",READLEN="$READLEN",INSMEAN="$INSMEAN",INSSD="$INSSD",SEED="$SEED",FORCE="$FORCE" \
     --array=1-"$N_FASTA" \
     "$SIM_SLURM"
 )
-
 echo "$JOB_SUBMIT_OUT"
 
 MAIN_JOBID="$(echo "$JOB_SUBMIT_OUT" | awk '{print $NF}')"
@@ -176,11 +179,11 @@ if [[ -f "$SIM_LIST_SLURM" ]]; then
 
   LOW_JOB_OUT=$(
     sbatch \
-      --export=ALL,WORKDIR="$OUTDIR",FASTA_LIST="$LOWCOV_LIST",PAIRS="$PAIRS_LOWCOV",READLEN="$READLEN",INSMEAN="$INSMEAN",INSSD="$INSSD",SEED="$SEED",FORCE="$FORCE",SUFFIX="lowcov" \
+      --export=ALL,REPO_ROOT="$REPO_ROOT",WORKDIR="$OUTDIR",FASTA_LIST="$LOWCOV_LIST",PAIRS="$PAIRS_LOWCOV",READLEN="$READLEN",INSMEAN="$INSMEAN",INSSD="$INSSD",SEED="$SEED",FORCE="$FORCE",SUFFIX="lowcov" \
       --array=1-2 \
       "$SIM_LIST_SLURM"
   )
-  echo "$LOW_JOB_OUT"
+
 else
   echo
   echo "NOTE: Skipping LOW-COV simulation (missing $SIM_LIST_SLURM)" >&2
@@ -197,13 +200,13 @@ if [[ -f "$MIX_SLURM" ]]; then
     MIX_OUT=$(
       sbatch \
         --dependency=afterok:"$MAIN_JOBID" \
-        --export=ALL,WORKDIR="$OUTDIR",WT_DATASET="WT",MUT_DATASET="$MUT_FOR_MIX",MIX_PAIRS="$MIX_PAIRS",SEED="$SEED",FORCE="$FORCE" \
+        --export=ALL,REPO_ROOT="$REPO_ROOT",WORKDIR="$OUTDIR",WT_DATASET="WT",MUT_DATASET="$MUT_FOR_MIX",MIX_PAIRS="$MIX_PAIRS",SEED="$SEED",FORCE="$FORCE" \
         "$MIX_SLURM"
     )
   else
     MIX_OUT=$(
       sbatch \
-        --export=ALL,WORKDIR="$OUTDIR",WT_DATASET="WT",MUT_DATASET="$MUT_FOR_MIX",MIX_PAIRS="$MIX_PAIRS",SEED="$SEED",FORCE="$FORCE" \
+        --export=ALL,REPO_ROOT="$REPO_ROOT",WORKDIR="$OUTDIR",WT_DATASET="WT",MUT_DATASET="$MUT_FOR_MIX",MIX_PAIRS="$MIX_PAIRS",SEED="$SEED",FORCE="$FORCE" \
         "$MIX_SLURM"
     )
   fi

@@ -2,13 +2,17 @@
 #SBATCH --job-name=wgsim_perfect
 #SBATCH --output=slurm_logs/wgsim_%A_%a.out
 #SBATCH --error=slurm_logs/wgsim_%A_%a.err
-#SBATCH --account=amr_services
+#SBATCH --account=amr_services_paid
 #SBATCH --partition=standard
 #SBATCH --time=04:00:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=2G
 
 set -euo pipefail
+
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+source "$REPO_ROOT/config/setup_environment.sh"
+setup_simulation_env
 
 # ------------------------------------------------------------
 # simulate_reads_wgsim.slurm
@@ -41,13 +45,7 @@ LOGDIR="${WORKDIR%/}/slurm_logs"
 mkdir -p "$OUTROOT" "$LOGDIR"
 mkdir -p "slurm_logs" 2>/dev/null || true  # in case you run from workdir
 
-# Modules
-if command -v module >/dev/null 2>&1; then
-  module load samtools >/dev/null 2>&1 || true
-fi
-
-command -v wgsim >/dev/null 2>&1 || { echo "ERROR: wgsim not found (load samtools?)" >&2; exit 1; }
-command -v gzip  >/dev/null 2>&1 || { echo "ERROR: gzip not found" >&2; exit 1; }
+require_cmd gzip
 
 # Build FASTA list deterministically
 mapfile -t FASTAS < <(ls -1 "$REFSDIR"/*.fasta | sort)

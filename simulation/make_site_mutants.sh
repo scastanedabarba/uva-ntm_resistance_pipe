@@ -54,6 +54,7 @@ done
 [[ -z "$WORKDIR" ]] && { echo "ERROR: --workdir required" >&2; exit 1; }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO_ROOT/config/setup_environment.sh"
 REF_DEFAULT="$REPO_ROOT/references/ATCC19977.fasta"
 REF="${REF_FASTA:-$REF_DEFAULT}"
 OUTDIR="${WORKDIR%/}/atcc_dataset"
@@ -61,21 +62,10 @@ OUTDIR="${WORKDIR%/}/atcc_dataset"
 [[ -f "$REF" ]] || { echo "ERROR: Reference FASTA not found: $REF" >&2; exit 1; }
 
 # -----------------------
-# Load modules (best-effort)
+# Environment
 # -----------------------
-if command -v module >/dev/null 2>&1; then
-  module load htslib   >/dev/null 2>&1 || true
-  module load samtools >/dev/null 2>&1 || true
-  module load bcftools >/dev/null 2>&1 || true
-  module load python   >/dev/null 2>&1 || true
-fi
-
-need() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing $1" >&2; exit 1; }; }
-need samtools
-need bcftools
-need bgzip
-need tabix
-need python3
+setup_mutant_env
+setup_python_env
 
 mkdir -p "$OUTDIR"/{refs,vcfs,tmp}
 
@@ -198,7 +188,7 @@ make_deletion_fasta() {
 
   local outfa="$OUTDIR/refs/ATCC19977_${label}.fasta"
 
-  python3 - "$WT" "$CHROM" "$del_start_ref" "$del_len" "$outfa" <<'PY'
+  "$NTM_PYTHON" - "$WT" "$CHROM" "$del_start_ref" "$del_len" "$outfa" <<'PY'
 import sys
 from pathlib import Path
 
@@ -285,12 +275,12 @@ rm -f "$VERIFDIR"/*_site_verification.tsv "$VERIFDIR"/site_verification_summary.
 echo
 echo "Running site verification on generated FASTAs..."
 for fa in "$OUTDIR/refs/"*.fasta; do
-  python3 "$VERIFY_SCRIPT" --fasta "$fa" --outdir "$VERIFDIR" >/dev/null
+  "$NTM_PYTHON" "$VERIFY_SCRIPT" --fasta "$fa" --outdir "$VERIFDIR" >/dev/null
 done
 
 SUMMARY="$VERIFDIR/site_verification_summary.tsv"
 
-python3 - "$VERIFDIR" "$SUMMARY" <<'PY'
+"$NTM_PYTHON" - "$VERIFDIR" "$SUMMARY" <<'PY'
 import re
 import sys
 from pathlib import Path

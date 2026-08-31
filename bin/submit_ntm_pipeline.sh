@@ -8,6 +8,9 @@ SCRIPTS_DIR="$REPO_ROOT/scripts"
 REF_DIR="$REPO_ROOT/references"
 SIM_DIR="$REPO_ROOT/simulation"
 
+# Shared software configuration
+source "$REPO_ROOT/config/setup_environment.sh"
+
 # ------------------------------------------------------------
 # submit_ntm_pipeline.sh  (STEP1 + STEP2 + STEP3)
 #
@@ -162,14 +165,7 @@ fi
 # ------------------------------------------------------------
 echo "[$(date)] Pre-indexing reference once (repo default unless --ref-fasta): $REF_FASTA" >&2
 
-if command -v module >/dev/null 2>&1; then
-  module use /project/amr_services/modulefiles/ >/dev/null 2>&1 || true
-  module load bwa >/dev/null 2>&1 || true
-  module load samtools >/dev/null 2>&1 || true
-fi
-
-command -v bwa >/dev/null 2>&1 || { echo "ERROR: bwa not found in PATH (module load bwa?)" >&2; exit 1; }
-command -v samtools >/dev/null 2>&1 || { echo "ERROR: samtools not found in PATH (module load samtools?)" >&2; exit 1; }
+setup_mapping_env
 
 if [[ ! -s "${REF_FASTA}.bwt" ]]; then
   bwa index "$REF_FASTA" > "$OUTDIR/logs/ref_bwa_index.out" 2> "$OUTDIR/logs/ref_bwa_index.err"
@@ -258,7 +254,7 @@ while IFS=$'\t' read -r ISOLATE RUN; do
       --partition="$PARTITION" \
       --output="$OUTDIR/logs/step1_${ISOLATE}_%j.out" \
       --error="$OUTDIR/logs/step1_${ISOLATE}_%j.err" \
-      --export=ALL,TARGET_FASTA="$TARGETS_FASTA" \
+      --export=ALL,REPO_ROOT="$REPO_ROOT",TARGET_FASTA="$TARGETS_FASTA" \
       "$STEP1_SCRIPT" "$ISOLATE" "$RUN" "$R1" "$R2" "$OUTDIR"
   )"
 
@@ -269,7 +265,7 @@ while IFS=$'\t' read -r ISOLATE RUN; do
       --partition="$PARTITION" \
       --output="$OUTDIR/logs/step2_${ISOLATE}_%j.out" \
       --error="$OUTDIR/logs/step2_${ISOLATE}_%j.err" \
-      --export=ALL,REF_FASTA="$REF_FASTA" \
+      --export=ALL,REPO_ROOT="$REPO_ROOT",REF_FASTA="$REF_FASTA" \
       "$STEP2_SCRIPT" "$ISOLATE" "$RUN" "$R1" "$R2" "$OUTDIR"
   )"
 

@@ -4,27 +4,39 @@ set -euo pipefail
 # ------------------------------------------------------------
 # make_site_mutants.sh
 #
-# Creates WT + per-site mutant FASTAs from ATCC19977 reference,
-# plus a literature-described truncated erm41 allele containing:
+# Creates ATCC19977 WT + per-site mutant FASTAs, including:
 #
-#   Δ64–65
-#   Δ159–432
+#   - rrl target-site mutants
+#   - rrs target-site mutants
+#   - erm41 C19T
+#   - erm41 T28C
+#   - literature-described truncated erm41 allele:
+#       Δ64–65
+#       Δ159–432
+#
+# Also creates additional erm-gene simulation controls:
+#
+#   - ATCC35855_erm39
+#       Unmodified ATCC35855 genome containing native erm39
+#
+#   - CCUG47445_erm55_plasmid
+#   - CCUG47445_erm55_transposon
+#   - CCUG47445_erm55_chromosome
+#
+#     Each is based on the complete CCUG47445 chromosome
+#     (CP007220.1) with one of the exact erm55 query sequences
+#     from references/nucleotide.fna inserted at the same
+#     synthetic location.
 #
 # The erm41 truncation simulation includes BOTH deletions, while
 # downstream interpretation uses the large Δ159–432 deletion as
 # the robust coverage-based truncation signal.
 #
-# After generation:
-#   - runs verify_sites.py on each generated FASTA (including WT)
-#   - concatenates all verification outputs into one summary TSV
-#
-# SNP verification schema:
-#   mutated_target, gene, position, atcc_strain, observed_base, match
-#
-# Inputs:
-#   <workdir>/references/ATCC19977.fasta
+# ATCC19977 site verification is run only on ATCC19977-derived
+# FASTAs because verify_sites.py uses ATCC19977 genomic coordinates.
 #
 # Outputs:
+#
 #   <workdir>/atcc_dataset/
 #     refs/
 #     vcfs/
@@ -32,7 +44,7 @@ set -euo pipefail
 #       truth_table.tsv
 #       truth_sv.tsv
 #     site_verification/
-#       <fastaNameMinusDotFasta>_site_verification.tsv
+#       <ATCC19977 fasta>_site_verification.tsv
 #       site_verification_summary.tsv
 # ------------------------------------------------------------
 
@@ -42,10 +54,10 @@ USAGE:
   bash make_site_mutants.sh --workdir <path> [options]
 
 REQUIRED:
-  --workdir <dir>         Working directory (contains references/)
+  --workdir <dir>         Working directory
 
 OPTIONAL:
-  --chrom <name>          Contig name (default: CU458896.1)
+  --chrom <name>          ATCC19977 contig name (default: CU458896.1)
   --no_skip_same          Do NOT skip when ALT==REF
   -h, --help              Show help
 EOF
@@ -67,7 +79,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no_skip_same)
       NO_SKIP_SAME=1
-      shift 1
+      shift
       ;;
     -h|--help)
       usage
@@ -97,10 +109,29 @@ source "$REPO_ROOT/config/setup_environment.sh"
 REF_DEFAULT="$REPO_ROOT/references/ATCC19977.fasta"
 REF="${REF_FASTA:-$REF_DEFAULT}"
 
+ATCC35855_REF="$REPO_ROOT/references/ATCC35855.fasta"
+CCUG47445_REF="$REPO_ROOT/references/CCUG47445.fasta"
+NUCLEOTIDE_REF="$REPO_ROOT/references/nucleotide.fna"
+
 OUTDIR="${WORKDIR%/}/atcc_dataset"
 
 [[ -f "$REF" ]] || {
-  echo "ERROR: Reference FASTA not found: $REF" >&2
+  echo "ERROR: ATCC19977 reference FASTA not found: $REF" >&2
+  exit 1
+}
+
+[[ -f "$ATCC35855_REF" ]] || {
+  echo "ERROR: ATCC35855 reference FASTA not found: $ATCC35855_REF" >&2
+  exit 1
+}
+
+[[ -f "$CCUG47445_REF" ]] || {
+  echo "ERROR: CCUG47445 reference FASTA not found: $CCUG47445_REF" >&2
+  exit 1
+}
+
+[[ -f "$NUCLEOTIDE_REF" ]] || {
+  echo "ERROR: nucleotide reference FASTA not found: $NUCLEOTIDE_REF" >&2
   exit 1
 }
 
@@ -137,12 +168,11 @@ gene_to_refpos() {
 }
 
 # ------------------------------------------------------------
-# Index reference
+# Index ATCC19977 reference
 # ------------------------------------------------------------
 
 [[ -f "${REF}.fai" ]] || samtools faidx "$REF"
 
-# Confirm contig exists
 if ! cut -f1 "${REF}.fai" | grep -Fxq "$CHROM"; then
   echo "ERROR: Contig '$CHROM' not found in FASTA index" >&2
   echo "Available contigs (first 20):" >&2
@@ -295,20 +325,12 @@ make_mutant "erm41_T28C" "$pos28" "C"
 # Both coordinates are relative to the ORIGINAL erm41 gene in
 # ATCC19977.
 #
-# IMPORTANT:
 # Deletions are applied downstream -> upstream.
-#
-# If the upstream Δ64–65 deletion were made first, every
-# downstream coordinate would shift left by 2 bp. Applying the
-# downstream deletion first allows both intervals to use the
-# original reference coordinates without adjustment.
 # ------------------------------------------------------------
 
 make_erm41_truncation_fasta() {
 
   local label="$1"
-
-  # Gene-relative coordinates -> reference coordinates
 
   local small_start_ref
   local small_end_ref
@@ -355,7 +377,6 @@ make_erm41_truncation_fasta() {
 import sys
 from pathlib import Path
 
-
 wt = Path(sys.argv[1])
 chrom = sys.argv[2]
 
@@ -367,11 +388,7 @@ large_end = int(sys.argv[6])
 
 outfa = Path(sys.argv[7])
 
-
-# ------------------------------------------------------------
 # Read FASTA
-# ------------------------------------------------------------
-
 seqs = {}
 order = []
 
@@ -383,33 +400,24 @@ with wt.open() as f:
         line = line.rstrip("\n")
 
         if line.startswith(">"):
-
             if name is not None:
                 seqs[name] = "".join(buf)
 
             name = line[1:].split()[0]
             order.append(name)
             buf = []
-
         else:
             buf.append(line)
 
     if name is not None:
         seqs[name] = "".join(buf)
 
-
 if chrom not in seqs:
     raise SystemExit(
         f"ERROR: contig {chrom} not found in {wt}"
     )
 
-
 seq = seqs[chrom]
-
-
-# ------------------------------------------------------------
-# Validate original-reference coordinates
-# ------------------------------------------------------------
 
 intervals = [
     ("small", small_start, small_end),
@@ -417,7 +425,6 @@ intervals = [
 ]
 
 for label, start, end in intervals:
-
     if start < 1:
         raise SystemExit(
             f"ERROR: {label} deletion starts before sequence"
@@ -435,78 +442,34 @@ for label, start, end in intervals:
             f"{start}-{end}"
         )
 
-
-# ------------------------------------------------------------
-# Apply deletions
-#
-# Coordinates are:
-#   1-based
-#   inclusive
-#   relative to the ORIGINAL reference
-#
-# Delete downstream -> upstream so removal of upstream sequence
-# never changes coordinates needed for downstream intervals.
-# ------------------------------------------------------------
-
+# Delete downstream -> upstream.
 deletions = [
     (small_start, small_end),
     (large_start, large_end),
 ]
 
-# Highest genomic coordinate first
 deletions.sort(key=lambda x: x[0], reverse=True)
 
 for start, end in deletions:
-
-    # Python slicing:
-    #
-    # original interval:
-    #   start..end       (1-based inclusive)
-    #
-    # becomes:
-    #   seq[:start-1] + seq[end:]
-    #
     start0 = start - 1
     end0 = end
-
     seq = seq[:start0] + seq[end0:]
-
 
 seqs[chrom] = seq
 
-
-# ------------------------------------------------------------
 # Write FASTA
-# ------------------------------------------------------------
-
 with outfa.open("w") as out:
-
     for nm in order:
-
         out.write(f">{nm}\n")
-
         s = seqs[nm]
 
         for i in range(0, len(s), 60):
             out.write(s[i:i + 60] + "\n")
 
-
-# ------------------------------------------------------------
-# Sanity checks
-# ------------------------------------------------------------
-
 expected_removed = (
     (small_end - small_start + 1)
     +
     (large_end - large_start + 1)
-)
-
-expected_length = len(
-    "".join(
-        line.strip()
-        for line in wt.open()
-        if not line.startswith(">")
-    )
 )
 
 print(
@@ -574,11 +537,252 @@ PY
   echo "  $svtruth"
 }
 
-# Generate the literature-described truncated allele
 make_erm41_truncation_fasta "erm41_truncated"
 
+# ============================================================
+# Additional erm-gene controls
+# ============================================================
+
+echo
+echo "Creating additional erm-gene controls..."
+
 # ------------------------------------------------------------
-# Verification + Summary
+# ATCC35855 native erm39 control
+#
+# No sequence modification is performed. The genome itself
+# contains erm39; this provides a native positive-control genome.
+# ------------------------------------------------------------
+
+ATCC35855_OUT="$OUTDIR/refs/ATCC35855_erm39.fasta"
+
+cp -f "$ATCC35855_REF" "$ATCC35855_OUT"
+samtools faidx "$ATCC35855_OUT"
+
+echo "Created native erm39 control:"
+echo "  $ATCC35855_OUT"
+
+# ------------------------------------------------------------
+# CCUG47445 synthetic erm55 insertion controls
+#
+# Complete chromosome:
+#   CP007220.1
+#
+# Each of the three exact erm55 query sequences from
+# references/nucleotide.fna is inserted AFTER nucleotide
+# 2,500,000.
+#
+# This coordinate is intentionally synthetic. Its only purpose
+# is to provide the same genomic background and insertion site
+# for all three erm55 variants.
+# ------------------------------------------------------------
+
+CCUG_CONTIG="CP007220.1"
+ERM55_INSERT_AFTER=2500000
+
+make_erm55_insertion_fasta() {
+
+  local erm_name="$1"
+  local output_label="$2"
+
+  local outfa="$OUTDIR/refs/CCUG47445_${output_label}.fasta"
+
+  echo
+  echo "Creating CCUG47445 erm55 control:"
+  echo "  erm sequence:      $erm_name"
+  echo "  chromosome:        $CCUG_CONTIG"
+  echo "  insert after base: $ERM55_INSERT_AFTER"
+  echo "  output:            $outfa"
+
+  "$NTM_PYTHON" - \
+    "$CCUG47445_REF" \
+    "$NUCLEOTIDE_REF" \
+    "$CCUG_CONTIG" \
+    "$ERM55_INSERT_AFTER" \
+    "$erm_name" \
+    "$outfa" <<'PY'
+
+import sys
+from pathlib import Path
+
+genome_path = Path(sys.argv[1])
+query_path = Path(sys.argv[2])
+target_contig = sys.argv[3]
+insert_after = int(sys.argv[4])
+erm_name = sys.argv[5]
+out_path = Path(sys.argv[6])
+
+
+def read_fasta(path):
+    """
+    Return:
+      records = [
+          {
+              "id": first whitespace-delimited header token,
+              "header": complete header text,
+              "seq": sequence
+          },
+          ...
+      ]
+    """
+    records = []
+
+    header = None
+    buf = []
+
+    with path.open() as handle:
+        for raw in handle:
+            line = raw.rstrip("\n")
+
+            if line.startswith(">"):
+                if header is not None:
+                    records.append(
+                        {
+                            "id": header.split()[0],
+                            "header": header,
+                            "seq": "".join(buf).upper(),
+                        }
+                    )
+
+                header = line[1:]
+                buf = []
+            else:
+                buf.append(line.strip())
+
+        if header is not None:
+            records.append(
+                {
+                    "id": header.split()[0],
+                    "header": header,
+                    "seq": "".join(buf).upper(),
+                }
+            )
+
+    return records
+
+
+genome_records = read_fasta(genome_path)
+query_records = read_fasta(query_path)
+
+query_lookup = {
+    record["id"]: record["seq"]
+    for record in query_records
+}
+
+if erm_name not in query_lookup:
+    available = ", ".join(sorted(query_lookup))
+    raise SystemExit(
+        f"ERROR: {erm_name!r} not found in {query_path}. "
+        f"Available IDs: {available}"
+    )
+
+erm_seq = query_lookup[erm_name]
+
+if not erm_seq:
+    raise SystemExit(
+        f"ERROR: {erm_name} has an empty sequence"
+    )
+
+target_found = False
+
+for record in genome_records:
+    if record["id"] != target_contig:
+        continue
+
+    target_found = True
+    seq = record["seq"]
+
+    if insert_after < 1 or insert_after >= len(seq):
+        raise SystemExit(
+            f"ERROR: insertion coordinate {insert_after} is invalid "
+            f"for {target_contig} length {len(seq)}"
+        )
+
+    # insert_after is a 1-based base coordinate.
+    #
+    # Example:
+    #   insert_after = 2,500,000
+    #
+    # New sequence:
+    #   original bases 1..2,500,000
+    #   + erm55
+    #   + original bases 2,500,001..end
+    record["seq"] = (
+        seq[:insert_after]
+        + erm_seq
+        + seq[insert_after:]
+    )
+
+    original_len = len(seq)
+    new_len = len(record["seq"])
+
+    expected_len = original_len + len(erm_seq)
+
+    if new_len != expected_len:
+        raise SystemExit(
+            f"ERROR: insertion length check failed: "
+            f"expected {expected_len}, observed {new_len}"
+        )
+
+    print(
+        f"Inserted {erm_name}: "
+        f"{len(erm_seq)} bp after "
+        f"{target_contig}:{insert_after}"
+    )
+
+    print(
+        f"Genome length: "
+        f"{original_len} -> {new_len}"
+    )
+
+if not target_found:
+    available = ", ".join(
+        record["id"]
+        for record in genome_records
+    )
+
+    raise SystemExit(
+        f"ERROR: target contig {target_contig!r} not found in "
+        f"{genome_path}. Available contigs: {available}"
+    )
+
+with out_path.open("w") as out:
+    for record in genome_records:
+        out.write(f">{record['header']}\n")
+
+        seq = record["seq"]
+
+        for i in range(0, len(seq), 60):
+            out.write(seq[i:i + 60] + "\n")
+PY
+
+  samtools faidx "$outfa"
+
+  echo "Created:"
+  echo "  $outfa"
+}
+
+make_erm55_insertion_fasta \
+  "erm55-plasmid" \
+  "erm55_plasmid"
+
+make_erm55_insertion_fasta \
+  "erm55-transposon" \
+  "erm55_transposon"
+
+make_erm55_insertion_fasta \
+  "erm55-chromosome" \
+  "erm55_chromosome"
+
+# ------------------------------------------------------------
+# ATCC19977 Verification + Summary
+#
+# IMPORTANT:
+# verify_sites.py is based on ATCC19977 coordinates.
+# Therefore ONLY ATCC19977-derived FASTAs are included here.
+#
+# ATCC35855 and CCUG47445 controls are simulated for downstream
+# erm gene detection and are intentionally excluded from this
+# site-verification step.
 # ------------------------------------------------------------
 
 VERIFDIR="$OUTDIR/site_verification"
@@ -600,9 +804,11 @@ rm -f \
   2>/dev/null || true
 
 echo
-echo "Running site verification on generated FASTAs..."
+echo "Running ATCC19977 site verification..."
 
-for fa in "$OUTDIR/refs/"*.fasta; do
+for fa in "$OUTDIR/refs/ATCC19977_"*.fasta; do
+
+  [[ -f "$fa" ]] || continue
 
   "$NTM_PYTHON" \
     "$VERIFY_SCRIPT" \
@@ -773,10 +979,16 @@ PY
 echo
 echo "Done."
 echo "Workdir:                 $WORKDIR"
-echo "Input FASTA:             $REF"
+echo "Input ATCC19977 FASTA:   $REF"
 echo "Output dataset:          $OUTDIR"
-echo "Mutant FASTAs:           $OUTDIR/refs/"
+echo "Simulation FASTAs:       $OUTDIR/refs/"
 echo "SNP truth table:         $TRUTH"
 echo "SV truth table:          $OUTDIR/tmp/truth_sv.tsv"
 echo "Per-FASTA verification:  $VERIFDIR/*_site_verification.tsv"
 echo "Summary verification:    $SUMMARY"
+echo
+echo "Additional controls:"
+echo "  ATCC35855_erm39"
+echo "  CCUG47445_erm55_plasmid"
+echo "  CCUG47445_erm55_transposon"
+echo "  CCUG47445_erm55_chromosome"

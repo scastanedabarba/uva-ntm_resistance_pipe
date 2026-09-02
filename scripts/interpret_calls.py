@@ -146,18 +146,20 @@ def read_isolates_from_linelist(path: str) -> List[str]:
 
 def display_isolate_name(iso: str) -> str:
     """
-    Rename the unmodified ATCC19977 simulation only in the
+    Rename ATCC19977 reference simulation datasets only in the
     interpretation output.
 
     Internal paths, filenames, and pipeline processing continue
-    to use the isolate name "WT".
+    to use the original isolate names.
     """
 
     if iso == "WT":
         return "reference"
 
-    return iso
+    if iso == "WT_lowcov":
+        return "reference_lowcov"
 
+    return iso
 
 # ============================================================
 # Depth parsing

@@ -38,16 +38,6 @@ retained for reproducibility and detailed review.
 
 ```bash
 git clone https://github.com/scastanedabarba/uva-ntm_resistance_pipe.git
-cd uva-ntm_resistance_pipe
-```
-
-For production use, a validated tagged release should be checked out rather
-than running directly from the development branch.
-
-For example:
-
-```bash
-git checkout v1.0.0
 ```
 
 ## 2. Software Environment
@@ -85,9 +75,6 @@ The pipeline uses the dedicated Python environment:
 
 and project software modules for compiled command-line tools.
 
-Users should not need to manually activate the Python environment before
-running the pipeline.
-
 ---
 
 # Pipeline Execution
@@ -102,9 +89,9 @@ data, the sequencing run must also be provided.
 Example:
 
 ```text
-isolate	run
-VALID_0001	251216_M70741_0293_000000000-M84N5
-VALID_0002	251216_M70741_0293_000000000-M84N5
+isolate,run
+VALID_0001,251216_M70741_0293_000000000-M84N5
+VALID_0002,251216_M70741_0293_000000000-M84N5
 ```
 
 Trimmed paired-end reads are expected at:
@@ -764,12 +751,3 @@ The pipeline uses:
 - BCFtools
 - BLAST+
 - Python
-
-## Literature
-
-Interpretation rules are based on published associations between resistance
-phenotypes and mutations or acquired/intrinsic resistance determinants in
-rapidly growing NTM.
-
-Relevant literature and reference accessions should be reviewed before adding
-new resistance determinants or expanding the predefined interpretation rules.

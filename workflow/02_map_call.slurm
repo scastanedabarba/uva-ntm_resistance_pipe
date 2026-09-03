@@ -43,11 +43,13 @@ ENV_CONFIG="$REPO_ROOT/config/setup_environment.sh"
 }
 source "$ENV_CONFIG"
 setup_mapping_env
+setup_python_env
 
 # ---------------------------
 # Reference
 # ---------------------------
 : "${REF_FASTA:?ERROR: REF_FASTA env var not set (export from controller)}"
+: "${ERM39_REF_FASTA:?ERROR: ERM39_REF_FASTA env var not set (export from controller)}"
 
 # ---------------------------
 # Target gene coordinates (ATCC 19977 reference numbering; 1-based inclusive)
@@ -55,6 +57,16 @@ setup_mapping_env
 RRS_START=1462398; RRS_END=1463901
 RRL_START=1464208; RRL_END=1467319
 ERM41_START=2345955; ERM41_END=2346476
+
+# erm39 coordinates in M. fortuitum ATCC35855 (CP194182.1)
+ERM39_CONTIG="CP194182.1"
+ERM39_START=2670342
+ERM39_END=2671082
+ERM39_POS=2670342
+ERM39_LENGTH=741
+ERM39_GENE_MIN_DEPTH=10
+ERM39_GENE_MIN_PCT=90
+ERM39_SITE_MIN_DEPTH=30
 
 # ---------------------------
 # Outputs
@@ -65,7 +77,9 @@ VAR_DIR="${ISO_DIR}/variants"
 CONS_DIR="${VAR_DIR}/consensus"
 LOG_DIR="${ISO_DIR}/logs"
 
-mkdir -p "$MAP_DIR" "$VAR_DIR" "$CONS_DIR" "$LOG_DIR"
+ERM39_MAP_DIR="${ISO_DIR}/erm39_mapping"
+
+mkdir -p "$MAP_DIR" "$VAR_DIR" "$CONS_DIR" "$LOG_DIR" "$ERM39_MAP_DIR"
 
 STATUS_TSV="${ISO_DIR}/status_step2.tsv"
 echo -e "Isolate\tStep\tStatus\tMessage" > "$STATUS_TSV"
@@ -83,6 +97,11 @@ if [[ ! -s "$REF_FASTA" ]]; then
   exit 0
 fi
 
+if [[ ! -s "$ERM39_REF_FASTA" ]]; then
+  echo -e "${ISOLATE}\tSTEP2\tFAIL\term39 reference FASTA not found: $ERM39_REF_FASTA" >> "$STATUS_TSV"
+  exit 0
+fi
+
 # Require indexes to exist (controller should create them)
 if [[ ! -s "${REF_FASTA}.bwt" ]]; then
   echo -e "${ISOLATE}\tBWA_INDEX\tFAIL\tMissing BWA index (.bwt). Controller should index reference first." >> "$STATUS_TSV"
@@ -90,6 +109,14 @@ if [[ ! -s "${REF_FASTA}.bwt" ]]; then
 fi
 if [[ ! -s "${REF_FASTA}.fai" ]]; then
   echo -e "${ISOLATE}\tFAIDX\tFAIL\tMissing FASTA index (.fai). Controller should faidx reference first." >> "$STATUS_TSV"
+  exit 0
+fi
+if [[ ! -s "${ERM39_REF_FASTA}.bwt" ]]; then
+  echo -e "${ISOLATE}\tERM39_BWA_INDEX\tFAIL\tMissing ATCC35855 BWA index (.bwt). Controller should index reference first." >> "$STATUS_TSV"
+  exit 0
+fi
+if [[ ! -s "${ERM39_REF_FASTA}.fai" ]]; then
+  echo -e "${ISOLATE}\tERM39_FAIDX\tFAIL\tMissing ATCC35855 FASTA index (.fai). Controller should faidx reference first." >> "$STATUS_TSV"
   exit 0
 fi
 
@@ -213,6 +240,194 @@ write_consensus "rrl"   "$RRL_START"   "$RRL_END"   "${CONS_DIR}/rrl.consensus.f
 write_consensus "erm41" "$ERM41_START" "$ERM41_END" "${CONS_DIR}/erm41.consensus.fasta" || true
 
 echo -e "${ISOLATE}\tCONSENSUS\tOK\tConsensus FASTAs written to ${CONS_DIR}" >> "$STATUS_TSV"
+
+
+
+# ---------------------------
+# 2d) erm39 mapping against ATCC35855
+#
+# BLAST remains the primary erm39 presence detector. This
+# mapping analysis evaluates the literature-supported initiation
+# codon mutation at erm39 position 1 (G>C; GTG>CTG).
+#
+# Site evidence is emitted only when >=90% of the 741-bp erm39
+# CDS has >=10x coverage against the ATCC35855 reference.
+# ---------------------------
+echo "[$(date)] Mapping $ISOLATE to ATCC35855 for erm39" >&2
+
+ERM39_BAM="${ERM39_MAP_DIR}/align.sorted.bam"
+ERM39_DEPTH="${ERM39_MAP_DIR}/erm39_depth.tsv"
+ERM39_PILEUP="${ERM39_MAP_DIR}/erm39_position1.pileup"
+ERM39_METRICS="${ERM39_MAP_DIR}/erm39_mapping_metrics.tsv"
+ERM39_SITE_TSV="${VAR_DIR}/erm39_site.tsv"
+
+rm -f "$ERM39_SITE_TSV"
+
+if bwa mem -t "$THREADS" "$ERM39_REF_FASTA" "$R1FASTQ" "$R2FASTQ" \
+  2> "${LOG_DIR}/bwa_mem_erm39.${ISOLATE}.err" \
+  | samtools sort -@ "$THREADS" -o "$ERM39_BAM" - \
+      2> "${LOG_DIR}/samtools_sort_erm39.${ISOLATE}.err"; then
+  :
+else
+  echo -e "${ISOLATE}\tERM39_MAP\tFAIL\tbwa mem / samtools sort failed (see logs)" >> "$STATUS_TSV"
+  echo "[$(date)] Step 2 done for $ISOLATE" >&2
+  exit 0
+fi
+
+samtools index "$ERM39_BAM" 2> "${LOG_DIR}/samtools_index_erm39.${ISOLATE}.err" || {
+  echo -e "${ISOLATE}\tERM39_MAP\tFAIL\tsamtools index failed (see logs)" >> "$STATUS_TSV"
+  echo "[$(date)] Step 2 done for $ISOLATE" >&2
+  exit 0
+}
+
+samtools depth \
+  -aa \
+  -r "${ERM39_CONTIG}:${ERM39_START}-${ERM39_END}" \
+  "$ERM39_BAM" \
+  > "$ERM39_DEPTH" \
+  2> "${LOG_DIR}/depth_erm39.${ISOLATE}.err" \
+  || true
+
+samtools mpileup \
+  -f "$ERM39_REF_FASTA" \
+  -r "${ERM39_CONTIG}:${ERM39_POS}-${ERM39_POS}" \
+  "$ERM39_BAM" \
+  > "$ERM39_PILEUP" \
+  2> "${LOG_DIR}/mpileup_erm39.${ISOLATE}.err" \
+  || true
+
+"$NTM_PYTHON" - \
+  "$ISOLATE" \
+  "$ERM39_DEPTH" \
+  "$ERM39_PILEUP" \
+  "$ERM39_METRICS" \
+  "$ERM39_SITE_TSV" \
+  "$ERM39_LENGTH" \
+  "$ERM39_GENE_MIN_DEPTH" \
+  "$ERM39_GENE_MIN_PCT" \
+  "$ERM39_SITE_MIN_DEPTH" <<'PYERM39'
+import sys
+
+(
+    isolate,
+    depth_path,
+    pileup_path,
+    metrics_path,
+    site_path,
+    erm39_length,
+    gene_min_depth,
+    gene_min_pct,
+    site_min_depth,
+) = sys.argv[1:]
+
+erm39_length = int(erm39_length)
+gene_min_depth = int(gene_min_depth)
+gene_min_pct = float(gene_min_pct)
+site_min_depth = int(site_min_depth)
+
+ref_base = "G"
+alt_base = "C"
+
+depths = []
+try:
+    with open(depth_path) as handle:
+        for line in handle:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            fields = line.split("\t")
+            if len(fields) >= 3:
+                depths.append(int(fields[2]))
+except FileNotFoundError:
+    pass
+
+if len(depths) < erm39_length:
+    depths.extend([0] * (erm39_length - len(depths)))
+elif len(depths) > erm39_length:
+    depths = depths[:erm39_length]
+
+covered_gene = sum(d >= gene_min_depth for d in depths)
+pct_covered = 100.0 * covered_gene / erm39_length
+gene_callable = pct_covered >= gene_min_pct
+
+counts = {"A": 0, "C": 0, "G": 0, "T": 0}
+
+try:
+    with open(pileup_path) as handle:
+        line = handle.readline().rstrip("\n")
+except FileNotFoundError:
+    line = ""
+
+if line:
+    fields = line.split("\t")
+    if len(fields) >= 5:
+        read_bases = fields[4]
+        i = 0
+        while i < len(read_bases):
+            c = read_bases[i]
+            if c == "^":
+                i += 2
+                continue
+            if c == "$":
+                i += 1
+                continue
+            if c in ".,":
+                counts[ref_base] += 1
+                i += 1
+                continue
+            if c.upper() in counts:
+                counts[c.upper()] += 1
+                i += 1
+                continue
+            if c in "+-":
+                i += 1
+                number = ""
+                while i < len(read_bases) and read_bases[i].isdigit():
+                    number += read_bases[i]
+                    i += 1
+                if number:
+                    i += int(number)
+                continue
+            i += 1
+
+depth = sum(counts.values())
+c_af = counts[alt_base] / depth if depth > 0 else 0.0
+
+if depth < site_min_depth:
+    site_call = "INDETERMINATE"
+elif c_af >= 0.90:
+    site_call = "MUT"
+elif c_af >= 0.10:
+    site_call = "MIXED"
+else:
+    site_call = "WT"
+
+with open(metrics_path, "w") as out:
+    out.write(
+        "Isolate\tGene\tgene_length\tgene_min_depth\t"
+        "pct_gene_covered\tgene_callable\tposition\t"
+        "ref_position\tREF\tALT\tDepth\tA\tC\tG\tT\tAF\tsite_call\n"
+    )
+    out.write(
+        f"{isolate}\term39\t{erm39_length}\t{gene_min_depth}\t"
+        f"{pct_covered:.2f}\t{str(gene_callable).upper()}\t1\t"
+        f"2670342\t{ref_base}\t{alt_base}\t{depth}\t"
+        f"{counts['A']}\t{counts['C']}\t{counts['G']}\t{counts['T']}\t"
+        f"{c_af:.4f}\t{site_call}\n"
+    )
+
+if gene_callable:
+    with open(site_path, "w") as out:
+        out.write(
+            "Isolate\tGene\tposition\tDepth\tREF\tALT\tQUAL\tDP\tAD\tAF\n"
+        )
+        out.write(
+            f"{isolate}\term39\t1\t{depth}\t{ref_base}\t{alt_base}\t\t"
+            f"{depth}\t{counts[ref_base]},{counts[alt_base]}\t{c_af:.4f}\n"
+        )
+PYERM39
+
+echo -e "${ISOLATE}\tERM39_MAP\tOK\term39 mapping assessment complete" >> "$STATUS_TSV"
 
 echo "[$(date)] Step 2 done for $ISOLATE" >&2
 

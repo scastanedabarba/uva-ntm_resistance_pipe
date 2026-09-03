@@ -47,6 +47,8 @@ ERM_SITES = [
     28,
 ]
 
+ERM39_SITE = 1
+
 ALL_SITES = (
     [("rrl", p) for p in RRL_SITES]
     + [("erm41", p) for p in ERM_SITES]
@@ -689,6 +691,48 @@ def call_erm41_base(
 
 
 # ============================================================
+# erm39 initiation codon
+#
+# Mapping reference: M. fortuitum ATCC35855 (CP194182.1)
+# erm39 position 1: G>C changes GTG to CTG.
+# ============================================================
+
+def call_erm39_site(
+    iso: str,
+    dp_min: int,
+    site_map: Dict[Tuple[str, str, int], dict],
+) -> str:
+
+    key = (
+        iso,
+        "erm39",
+        ERM39_SITE,
+    )
+
+    if key not in site_map:
+        return "INDETERMINATE"
+
+    evidence = site_map[key]
+
+    depth = evidence.get(
+        "Depth",
+        -1,
+    )
+
+    if depth < dp_min:
+        return "INDETERMINATE"
+
+    af = evidence.get(
+        "AF",
+        float("nan"),
+    )
+
+    return site_state_from_variant(
+        af
+    )
+
+
+# ============================================================
 # erm41 truncation call
 # ============================================================
 
@@ -1322,6 +1366,12 @@ def main():
                 else "N"
             )
 
+            erm39_state = call_erm39_site(
+                iso,
+                args.dp_min,
+                site_map,
+            )
+
             # ------------------------------------------------
             # erm41 applicability + genotype
             # ------------------------------------------------
@@ -1462,16 +1512,37 @@ def main():
 
                 if clar_call != "Resistant":
 
-                    clar_call = (
-                        "Resistance possible"
-                    )
+                    if erm39_state == "MUT":
 
-                    if not clar_reason.startswith(
-                        "Resistance possible"
-                    ):
+                        clar_call = "Susceptible"
                         clar_reason = (
-                            "Resistance possible; "
-                            "erm39 detected"
+                            "Susceptible; mutation in erm39 "
+                            "initiation codon detected "
+                            "(GTG->CTG)"
+                        )
+
+                    elif erm39_state == "MIXED":
+
+                        clar_call = "Resistance possible"
+                        clar_reason = (
+                            "Resistance possible; mixed genotype "
+                            "at erm39 initiation codon"
+                        )
+
+                    elif erm39_state == "WT":
+
+                        clar_call = "Resistant"
+                        clar_reason = (
+                            "Resistant; erm39 detected with "
+                            "intact GTG initiation codon"
+                        )
+
+                    else:
+
+                        clar_call = "Resistant"
+                        clar_reason = (
+                            "Resistant; erm39 detected; "
+                            "initiation codon not callable"
                         )
 
             if erm55 == "Y":
@@ -1563,3 +1634,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

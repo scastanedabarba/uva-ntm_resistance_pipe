@@ -35,6 +35,7 @@ source "$REPO_ROOT/config/setup_environment.sh"
 #
 # References (packaged in repo by default):
 #   repo/references/ATCC19977.fasta
+#   repo/references/ATCC35855.fasta
 #   repo/references/nucleotide.fna
 #
 # Submits:
@@ -147,8 +148,9 @@ STEP1_SCRIPT="$WORKFLOW_DIR/01_assembly_blast.slurm"
 STEP2_SCRIPT="$WORKFLOW_DIR/02_map_call.slurm"
 STEP3_SCRIPT="$WORKFLOW_DIR/03_compile_and_interpret.slurm"
 TARGETS_FASTA="$REF_DIR/nucleotide.fna"
+ERM39_REF_FASTA="$REF_DIR/ATCC35855.fasta"
 
-for f in "$STEP1_SCRIPT" "$STEP2_SCRIPT" "$STEP3_SCRIPT" "$TARGETS_FASTA"; do
+for f in "$STEP1_SCRIPT" "$STEP2_SCRIPT" "$STEP3_SCRIPT" "$TARGETS_FASTA" "$ERM39_REF_FASTA"; do
   [[ -f "$f" ]] || { echo "ERROR: Missing required file: $f" >&2; exit 1; }
 done
 
@@ -172,6 +174,16 @@ if [[ ! -s "${REF_FASTA}.bwt" ]]; then
 fi
 if [[ ! -s "${REF_FASTA}.fai" ]]; then
   samtools faidx "$REF_FASTA" > "$OUTDIR/logs/ref_faidx.out" 2> "$OUTDIR/logs/ref_faidx.err"
+fi
+
+# Pre-index the ATCC35855 reference used only for erm39 mapping.
+echo "[$(date)] Pre-indexing erm39 reference once: $ERM39_REF_FASTA" >&2
+
+if [[ ! -s "${ERM39_REF_FASTA}.bwt" ]]; then
+  bwa index "$ERM39_REF_FASTA" > "$OUTDIR/logs/erm39_ref_bwa_index.out" 2> "$OUTDIR/logs/erm39_ref_bwa_index.err"
+fi
+if [[ ! -s "${ERM39_REF_FASTA}.fai" ]]; then
+  samtools faidx "$ERM39_REF_FASTA" > "$OUTDIR/logs/erm39_ref_faidx.out" 2> "$OUTDIR/logs/erm39_ref_faidx.err"
 fi
 
 # ------------------------------------------------------------
@@ -265,7 +277,7 @@ while IFS=$'\t' read -r ISOLATE RUN; do
       --partition="$PARTITION" \
       --output="$OUTDIR/logs/step2_${ISOLATE}_%j.out" \
       --error="$OUTDIR/logs/step2_${ISOLATE}_%j.err" \
-      --export=ALL,REPO_ROOT="$REPO_ROOT",REF_FASTA="$REF_FASTA" \
+      --export=ALL,REPO_ROOT="$REPO_ROOT",REF_FASTA="$REF_FASTA",ERM39_REF_FASTA="$ERM39_REF_FASTA" \
       "$STEP2_SCRIPT" "$ISOLATE" "$RUN" "$R1" "$R2" "$OUTDIR"
   )"
 
@@ -320,3 +332,4 @@ fi
 if [[ "$SAW_ONECOL" -eq 1 && -n "$READS_ROOT" ]]; then
   echo "Note: 1-column linelist detected; RUN defaulted to 'SIM' where missing."
 fi
+

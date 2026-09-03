@@ -287,6 +287,49 @@ def read_targets_variants_tsv(path: str) -> Dict[Tuple[str, int], dict]:
             }
     return d
 
+def read_erm39_site(path: str) -> List[dict]:
+    """
+    Parse callable erm39 position-1 evidence produced by Step 2.
+
+    The file is emitted only when the full erm39 locus satisfies
+    the gene-level mapping criterion.
+    """
+    rows: List[dict] = []
+
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return rows
+
+    with open(path, "r") as f:
+        header = f.readline().rstrip("\n").split("\t")
+        idx = {name: i for i, name in enumerate(header)}
+
+        required = [
+            "Isolate", "Gene", "position", "Depth",
+            "REF", "ALT", "QUAL", "DP", "AD", "AF",
+        ]
+
+        if any(col not in idx for col in required):
+            raise RuntimeError(
+                f"Unexpected erm39_site.tsv schema: {path}"
+            )
+
+        for line in f:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+
+            parts = line.split("\t")
+            if len(parts) < len(header):
+                parts += [""] * (len(header) - len(parts))
+
+            rows.append({
+                col: parts[idx[col]]
+                for col in required
+            })
+
+    return rows
+
+
 def concat_status_files(outdir: str, isolates: List[str]) -> None:
     """
     Concatenate per-isolate status_step1.tsv and status_step2.tsv into:
@@ -432,6 +475,26 @@ with open(sites_out, "w") as out:
                 v.get("DP",""),
                 v.get("AD",""),
                 af,
+            ]) + "\n")
+
+        # Include erm39 position 1 only when Step 2 found the
+        # complete ATCC35855 erm39 locus sufficiently callable.
+        erm39_site_tsv = os.path.join(
+            OUTDIR, iso, "variants", "erm39_site.tsv"
+        )
+
+        for row in read_erm39_site(erm39_site_tsv):
+            out.write("\t".join([
+                row.get("Isolate", iso),
+                row.get("Gene", "erm39"),
+                row.get("position", "1"),
+                row.get("Depth", ""),
+                row.get("REF", ""),
+                row.get("ALT", ""),
+                row.get("QUAL", ""),
+                row.get("DP", ""),
+                row.get("AD", ""),
+                row.get("AF", ""),
             ]) + "\n")
 
 # -----------------------
@@ -646,4 +709,5 @@ print(f"Wrote: {sites_out}")
 print(f"Wrote: {trunc_out}")
 print(f"Wrote: {os.path.join(OUTDIR, 'status', 'status_step1_all.tsv')}")
 print(f"Wrote: {os.path.join(OUTDIR, 'status', 'status_step2_all.tsv')}")
+
 

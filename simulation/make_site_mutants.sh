@@ -19,6 +19,9 @@ set -euo pipefail
 #   - ATCC35855_erm39
 #       Unmodified ATCC35855 genome containing native erm39
 #
+#   - ATCC35855_erm39_C1
+#       ATCC35855 erm39 initiation-codon mutant (G>C; GTG>CTG)
+#
 #   - CCUG47445_erm55_plasmid
 #   - CCUG47445_erm55_transposon
 #   - CCUG47445_erm55_chromosome
@@ -561,6 +564,84 @@ samtools faidx "$ATCC35855_OUT"
 echo "Created native erm39 control:"
 echo "  $ATCC35855_OUT"
 
+
+# ------------------------------------------------------------
+# ATCC35855 erm39 initiation-codon mutant
+#
+# erm39 position 1:
+#   CP194182.1:2670342
+#   G -> C
+#   GTG -> CTG
+# ------------------------------------------------------------
+
+ERM39_CHROM="CP194182.1"
+ERM39_POS=2670342
+ERM39_MUT_LABEL="ATCC35855_erm39_C1"
+ERM39_MUT_FASTA="$OUTDIR/refs/${ERM39_MUT_LABEL}.fasta"
+ERM39_VCF="$OUTDIR/vcfs/erm39_C1.vcf"
+ERM39_VCFGZ="${ERM39_VCF}.gz"
+
+[[ -f "${ATCC35855_REF}.fai" ]] || samtools faidx "$ATCC35855_REF"
+
+erm39_ref_base="$(
+  samtools faidx \
+    "$ATCC35855_REF" \
+    "${ERM39_CHROM}:${ERM39_POS}-${ERM39_POS}" \
+    | awk 'NR==2 {print toupper($0)}'
+)"
+
+if [[ "$erm39_ref_base" != "G" ]]; then
+  echo \
+    "ERROR: Expected G at ${ERM39_CHROM}:${ERM39_POS}, observed '${erm39_ref_base}'" \
+    >&2
+  exit 1
+fi
+
+{
+  printf "##fileformat=VCFv4.2\n"
+  printf "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+  printf "%s\t%s\t.\tG\tC\t.\t.\t.\n" \
+    "$ERM39_CHROM" \
+    "$ERM39_POS"
+} > "$ERM39_VCF"
+
+bgzip -f -c "$ERM39_VCF" > "$ERM39_VCFGZ"
+tabix -f -p vcf "$ERM39_VCFGZ"
+
+bcftools consensus \
+  -s - \
+  -f "$ATCC35855_REF" \
+  "$ERM39_VCFGZ" \
+  > "$ERM39_MUT_FASTA"
+
+samtools faidx "$ERM39_MUT_FASTA"
+
+observed_erm39_base="$(
+  samtools faidx \
+    "$ERM39_MUT_FASTA" \
+    "${ERM39_CHROM}:${ERM39_POS}-${ERM39_POS}" \
+    | awk 'NR==2 {print toupper($0)}'
+)"
+
+if [[ "$observed_erm39_base" != "C" ]]; then
+  echo \
+    "ERROR: Failed to create erm39 initiation-codon mutant; expected C but observed '${observed_erm39_base}'" \
+    >&2
+  exit 1
+fi
+
+printf "%s\t%s\t%s\t%s\t%s\n" \
+  "$ERM39_MUT_LABEL" \
+  "$ERM39_CHROM" \
+  "$ERM39_POS" \
+  "G" \
+  "C" \
+  >> "$TRUTH"
+
+echo "Created erm39 initiation-codon mutant:"
+echo "  $ERM39_MUT_FASTA"
+echo "  ${ERM39_CHROM}:${ERM39_POS} G>C (GTG -> CTG)"
+
 # ------------------------------------------------------------
 # CCUG47445 synthetic erm55 insertion controls
 #
@@ -989,6 +1070,8 @@ echo "Summary verification:    $SUMMARY"
 echo
 echo "Additional controls:"
 echo "  ATCC35855_erm39"
+echo "  ATCC35855_erm39_C1"
 echo "  CCUG47445_erm55_plasmid"
 echo "  CCUG47445_erm55_transposon"
 echo "  CCUG47445_erm55_chromosome"
+

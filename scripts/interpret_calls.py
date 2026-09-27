@@ -732,6 +732,37 @@ def call_erm39_site(
     )
 
 
+def display_erm39_site(
+    iso: str,
+    erm39_detected: str,
+    state: str,
+    site_map: Dict[Tuple[str, str, int], dict],
+) -> str:
+    """Display the erm39 initiation-codon nucleotide in interpretation.tsv."""
+
+    if erm39_detected != "Y":
+        return "NA"
+
+    if state == "INDETERMINATE":
+        return "N"
+
+    if state == "WT":
+        return "G"
+
+    key = (iso, "erm39", ERM39_SITE)
+    alt = first_alt_base(site_map.get(key, {}).get("ALT", ""))
+
+    if state == "MUT":
+        return alt
+
+    if state == "MIXED":
+        if alt in ("A", "C", "G", "T"):
+            return f"G/{alt}"
+        return "N"
+
+    return "N"
+
+
 # ============================================================
 # erm41 truncation call
 # ============================================================
@@ -973,7 +1004,8 @@ def interpret_clarithro(
 
         return (
             "Susceptible",
-            "Susceptible",
+            "Susceptible; no evaluated clarithromycin "
+            "resistance determinant detected",
         )
 
     if erm41_trunc == "TRUNCATED":
@@ -1299,6 +1331,7 @@ def main():
         +
         [
             "erm39_detected",
+            "erm39_1",
             "erm55_detected",
         ]
         +
@@ -1369,6 +1402,13 @@ def main():
             erm39_state = call_erm39_site(
                 iso,
                 args.dp_min,
+                site_map,
+            )
+
+            erm39_display = display_erm39_site(
+                iso,
+                erm39,
+                erm39_state,
                 site_map,
             )
 
@@ -1615,6 +1655,7 @@ def main():
 
             row += [
                 erm39,
+                erm39_display,
                 erm55,
             ]
 
@@ -1634,4 +1675,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

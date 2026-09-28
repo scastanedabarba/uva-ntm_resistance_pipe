@@ -20,15 +20,15 @@ The pipeline performs:
 5. Coverage-based detection of `erm41` truncation
 6. Targeted assessment of the `erm39` initiation codon
 7. Structured clarithromycin and amikacin resistance interpretation
-8. Generation of reproducible TSV outputs and an Excel evidence summary
+8. Generation of reproducible TSV outputs and an Excel evidence summary with target-site coverage
 
 The primary outputs are:
 
 - `interpretation.tsv` — final WGS-based clarithromycin and amikacin interpretations
 - `myco_prediction_summary.xlsx` — supporting evidence used to review the final interpretations
 
-Additional TSV files containing BLAST, variant, and truncation evidence are
-retained for reproducibility and detailed review.
+Additional TSV files containing BLAST, site-level coverage/variant evidence, and
+truncation evidence are retained for reproducibility and detailed review.
 
 ---
 
@@ -513,16 +513,18 @@ evidence in `myco_prediction_summary.xlsx`.
 **Purpose:** Primary review workbook containing the evidence used to support
 the final WGS interpretations.
 
-The workbook aggregates results from the major analytical components of the
-pipeline, including:
+The workbook aggregates evidence from the major analytical components of the
+pipeline. It contains the following worksheets:
 
-- final clarithromycin and amikacin interpretations
-- resistance-associated variant evidence
-- sequencing depth and allele-frequency evidence
-- BLAST detection of `erm41`, `erm39`, and `erm55`
-- `erm41` truncation assessment
-- `erm39` initiation-codon variant evidence
-- supporting analysis metrics
+- `variants` — site-level sequencing depth and variant evidence from `sites_evidence.tsv`
+- `truncation` — coverage metrics used to assess `erm41` truncation
+- `blast` — BLAST evidence for `erm41`, `erm39`, and `erm55`
+- `coverage` — read depth at each predefined target site for every isolate
+
+The `coverage` worksheet provides a compact per-isolate view of depth at the
+evaluated `rrl`, `rrs`, and `erm41` positions and at `erm39` position 1. This
+allows uncallable or low-depth sites in the final interpretation to be traced
+directly to their observed sequencing depth.
 
 The workbook is intended to provide a convenient format for reviewing the
 evidence underlying the calls reported in `interpretation.tsv`.
@@ -536,10 +538,17 @@ output, while the Excel workbook provides the associated evidence for review.
 
 ## 3. `summary/sites_evidence.tsv`
 
-**Purpose:** Detailed sequencing and variant evidence at predefined
+**Purpose:** Detailed sequencing-depth and variant evidence at predefined
 resistance-associated positions.
 
-This table includes evaluated positions from:
+The table contains one row for every predefined `rrl`, `rrs`, and `erm41`
+target site for every isolate, including positions that match the reference
+and positions with insufficient depth for interpretation. `erm39` position 1
+is also included using the targeted ATCC 35855 mapping assessment. This allows
+the observed depth underlying low-coverage or uncallable site-level results to
+be reviewed directly.
+
+The table includes evaluated positions from:
 
 - `rrl`
 - `rrs`
@@ -551,13 +560,17 @@ This table includes evaluated positions from:
 | Isolate | Isolate identifier |
 | Gene | Resistance-associated gene |
 | position | Gene-relative 1-based position |
-| Depth | Read depth |
+| Depth | Observed read depth at the target position |
 | REF | Reference allele |
-| ALT | Alternate allele |
-| QUAL | Variant quality |
-| DP | Total depth |
-| AD | Allele depths |
-| AF | Alternate allele frequency |
+| ALT | Alternate allele when variant evidence is present |
+| QUAL | Variant quality when applicable |
+| DP | Variant-call depth when applicable |
+| AD | Allele depths when applicable |
+| AF | Alternate allele frequency when applicable |
+
+For reference-matching positions without a variant record, the variant-specific
+fields (`ALT`, `QUAL`, `DP`, `AD`, and `AF`) may be blank while `Depth` retains
+the observed site coverage.
 
 Allele-frequency interpretation:
 

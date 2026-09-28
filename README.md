@@ -516,7 +516,7 @@ the final WGS interpretations.
 The workbook aggregates evidence from the major analytical components of the
 pipeline. It contains the following worksheets:
 
-- `variants` — site-level sequencing depth and variant evidence from `sites_evidence.tsv`
+- `variants` — variant/callable-site evidence from `sites_evidence.tsv`
 - `truncation` — coverage metrics used to assess `erm41` truncation
 - `blast` — BLAST evidence for `erm41`, `erm39`, and `erm55`
 - `coverage` — read depth at each predefined target site for every isolate
@@ -538,17 +538,18 @@ output, while the Excel workbook provides the associated evidence for review.
 
 ## 3. `summary/sites_evidence.tsv`
 
-**Purpose:** Detailed sequencing-depth and variant evidence at predefined
+**Purpose:** Detailed variant and callable-site evidence at predefined
 resistance-associated positions.
 
-The table contains one row for every predefined `rrl`, `rrs`, and `erm41`
-target site for every isolate, including positions that match the reference
-and positions with insufficient depth for interpretation. `erm39` position 1
-is also included using the targeted ATCC 35855 mapping assessment. This allows
-the observed depth underlying low-coverage or uncallable site-level results to
-be reviewed directly.
+For `rrl`, `rrs`, and `erm41`, this table contains positions with a variant
+record. Reference-matching positions without a variant call are not added solely
+for coverage reporting. Callable `erm39` position-1 evidence is also included
+when the `erm39` gene-level mapping criterion is satisfied.
 
-The table includes evaluated positions from:
+Complete read depth for every predefined target site is provided separately in
+the `coverage` worksheet of `myco_prediction_summary.xlsx`.
+
+This table includes evaluated evidence from:
 
 - `rrl`
 - `rrs`
@@ -560,17 +561,13 @@ The table includes evaluated positions from:
 | Isolate | Isolate identifier |
 | Gene | Resistance-associated gene |
 | position | Gene-relative 1-based position |
-| Depth | Observed read depth at the target position |
+| Depth | Read depth |
 | REF | Reference allele |
-| ALT | Alternate allele when variant evidence is present |
-| QUAL | Variant quality when applicable |
-| DP | Variant-call depth when applicable |
-| AD | Allele depths when applicable |
-| AF | Alternate allele frequency when applicable |
-
-For reference-matching positions without a variant record, the variant-specific
-fields (`ALT`, `QUAL`, `DP`, `AD`, and `AF`) may be blank while `Depth` retains
-the observed site coverage.
+| ALT | Alternate allele |
+| QUAL | Variant quality |
+| DP | Variant-call depth |
+| AD | Allele depths |
+| AF | Alternate allele frequency |
 
 Allele-frequency interpretation:
 

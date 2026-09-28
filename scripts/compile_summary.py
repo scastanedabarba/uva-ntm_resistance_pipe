@@ -476,7 +476,7 @@ with open(blast_out, "w") as out:
             ]) + "\n")
 
 # -----------------------
-# Sites evidence (ALL predefined target sites)
+# Sites evidence (variant/callable-site evidence only)
 # -----------------------
 sites_out = os.path.join(OUTDIR, "summary", "sites_evidence.tsv")
 sites_header = [
@@ -494,80 +494,44 @@ with open(sites_out, "w") as out:
         depths = read_depth_tsv(depth_tsv, REF_CONTIG)
         varmap = read_targets_variants_tsv(var_tsv)
 
-        # Emit every predefined rrl/erm41/rrs target site, including
-        # reference-matching and low-depth sites with no VCF record.
         for gene, pos_gene in SITES:
             key = (gene, pos_gene)
-            start = GENE_STARTS[gene]
-            pos_ref = start + (pos_gene - 1)
+            if key not in varmap:
+                continue
+
+            pos_ref = GENE_STARTS[gene] + (pos_gene - 1)
             depth = depths.get(pos_ref, 0)
-            v = varmap.get(key)
+            v = varmap[key]
 
-            if v is not None:
-                ref = v.get("REF", "") or REFERENCE_BASES.get(key, "")
-                alt = v.get("ALT", "")
-                qual = v.get("QUAL", "")
-                dp = v.get("DP", "")
-                ad = v.get("AD", "")
-                af = compute_af(dp, ad)
-            else:
-                ref = REFERENCE_BASES.get(key, "")
-                alt = ""
-                qual = ""
-                dp = ""
-                ad = ""
-                af = ""
+            ref = v.get("REF", "")
+            alt = v.get("ALT", "")
+            qual = v.get("QUAL", "")
+            dp = v.get("DP", "")
+            ad = v.get("AD", "")
+            af = compute_af(dp, ad)
 
             out.write("\t".join([
-                iso,
-                gene,
-                str(pos_gene),
-                str(depth),
-                ref,
-                alt,
-                qual,
-                dp,
-                ad,
-                af,
+                iso, gene, str(pos_gene), str(depth),
+                ref, alt, qual, dp, ad, af,
             ]) + "\n")
 
-        # erm39 mapping metrics are written for every isolate even when the
-        # locus fails the gene-level callability criterion. Use that file so
-        # raw position-1 depth remains visible for QC in all cases.
-        erm39_metrics_tsv = os.path.join(
-            OUTDIR, iso, "erm39_mapping", "erm39_mapping_metrics.tsv"
+        erm39_site_tsv = os.path.join(
+            OUTDIR, iso, "variants", "erm39_site.tsv"
         )
-        m = read_erm39_metrics(erm39_metrics_tsv)
+        erm39_rows = read_erm39_site(erm39_site_tsv)
 
-        if m is not None:
-            depth = m.get("Depth", "")
-            ref = m.get("REF", "G") or "G"
-            alt = m.get("ALT", "C") or "C"
-            a = m.get("A", "")
-            c = m.get("C", "")
-            g = m.get("G", "")
-            t = m.get("T", "")
-            ref_count = {"A": a, "C": c, "G": g, "T": t}.get(ref, "")
-            alt_count = {"A": a, "C": c, "G": g, "T": t}.get(alt, "")
-            ad = f"{ref_count},{alt_count}" if ref_count != "" and alt_count != "" else ""
-
+        for erm39_row in erm39_rows:
             out.write("\t".join([
-                iso,
-                "erm39",
-                "1",
-                depth,
-                ref,
-                alt,
-                "",
-                depth,
-                ad,
-                m.get("AF", ""),
-            ]) + "\n")
-        else:
-            # Preserve a row even if erm39 mapping metrics are unexpectedly
-            # unavailable, so the missing evidence is explicit.
-            out.write("\t".join([
-                iso, "erm39", "1", "", "G", "C", "", "", "", ""
+                erm39_row.get("Isolate", iso),
+                erm39_row.get("Gene", "erm39"),
+                erm39_row.get("position", "1"),
+                erm39_row.get("Depth", ""),
+                erm39_row.get("REF", ""),
+                erm39_row.get("ALT", ""),
+                erm39_row.get("QUAL", ""),
+                erm39_row.get("DP", ""),
+                erm39_row.get("AD", ""),
+                erm39_row.get("AF", ""),
             ]) + "\n")
 
 # -----------------------
@@ -751,8 +715,8 @@ def tsv_to_sheet(ws, tsv_path: str) -> None:
 
             ws.append(parts)
 
-def add_coverage_sheet(ws, sites_tsv: str, isolates: List[str]) -> None:
-    """Write a wide target-site depth matrix for rapid QC review."""
+def add_coverage_sheet(ws, outdir: str, isolates: List[str]) -> None:
+    """Write raw target-site depth directly from Step 2 outputs."""
     coverage_columns = [
         ("rrl", 2269), ("rrl", 2270), ("rrl", 2271),
         ("rrl", 2281), ("rrl", 2293),
@@ -760,37 +724,34 @@ def add_coverage_sheet(ws, sites_tsv: str, isolates: List[str]) -> None:
         ("rrs", 1373), ("rrs", 1375), ("rrs", 1376), ("rrs", 1458),
         ("erm39", 1),
     ]
-    labels = [f"{gene}_{pos}" for gene, pos in coverage_columns]
-    ws.append(["Isolate"] + labels)
-
-    depth_map: Dict[Tuple[str, str, int], str] = {}
-    if os.path.exists(sites_tsv) and os.path.getsize(sites_tsv) > 0:
-        with open(sites_tsv, "r") as f:
-            header = f.readline().rstrip("\n").split("\t")
-            idx = {name: i for i, name in enumerate(header)}
-            for line in f:
-                parts = line.rstrip("\n").split("\t")
-                if len(parts) < len(header):
-                    parts += [""] * (len(header) - len(parts))
-                try:
-                    iso = parts[idx["Isolate"]]
-                    gene = parts[idx["Gene"]]
-                    pos = int(parts[idx["position"]])
-                    depth = parts[idx["Depth"]]
-                except (KeyError, ValueError, IndexError):
-                    continue
-                depth_map[(iso, gene, pos)] = depth
+    ws.append(["Isolate"] + [f"{gene}_{pos}" for gene, pos in coverage_columns])
 
     for iso in isolates:
+        depth_tsv = os.path.join(outdir, iso, "variants", "targets_depth.tsv")
+        depths = read_depth_tsv(depth_tsv, REF_CONTIG)
+
+        erm39_metrics_tsv = os.path.join(
+            outdir, iso, "erm39_mapping", "erm39_mapping_metrics.tsv"
+        )
+        erm39_metrics = read_erm39_metrics(erm39_metrics_tsv)
+
         row = [iso]
-        for gene, pos in coverage_columns:
-            value = depth_map.get((iso, gene, pos), "")
+        for gene, pos_gene in coverage_columns:
+            if gene == "erm39":
+                value = ""
+                if erm39_metrics is not None:
+                    value = erm39_metrics.get("Depth", "")
+            else:
+                pos_ref = GENE_STARTS[gene] + (pos_gene - 1)
+                value = depths.get(pos_ref, 0)
+
             if value != "":
                 try:
                     value = int(value)
-                except ValueError:
+                except (TypeError, ValueError):
                     pass
             row.append(value)
+
         ws.append(row)
 
 try:
@@ -809,7 +770,7 @@ try:
     tsv_to_sheet(ws3, blast_out)
 
     ws4 = wb.create_sheet("coverage")
-    add_coverage_sheet(ws4, sites_out, isolates)
+    add_coverage_sheet(ws4, OUTDIR, isolates)
 
     wb.save(excel_out)
     print(f"Wrote: {excel_out}")

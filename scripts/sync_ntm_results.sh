@@ -211,6 +211,8 @@ while IFS=$'\t' read -r ISOLATE RUN; do
     echo "  $FINAL_DEST"
 
     if rsync -a \
+        --no-owner \
+        --no-group \
         --exclude='*.bam' \
         --exclude='*.bam.bai' \
         "$SOURCE/" \

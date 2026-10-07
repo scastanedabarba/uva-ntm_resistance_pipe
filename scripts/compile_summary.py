@@ -3,6 +3,7 @@
 import argparse
 import os
 import statistics
+import shutil
 from collections import defaultdict
 from typing import Dict, List, Tuple, Optional
 
@@ -779,6 +780,65 @@ except Exception as e:
     print(f"WARNING: Could not write Excel summary ({excel_out}): {e}")
 
 # -----------------------
+# Write per-isolate final results
+# -----------------------
+def write_filtered_tsv(source_tsv: str, dest_tsv: str, isolate: str) -> None:
+    """Copy the header plus rows belonging to one isolate."""
+    with open(source_tsv, "r") as src, open(dest_tsv, "w") as dst:
+        header = src.readline()
+        if header:
+            dst.write(header)
+
+        for line in src:
+            if not line.strip():
+                continue
+            if line.split("\t", 1)[0] == isolate:
+                dst.write(line)
+
+for iso in isolates:
+    results_dir = os.path.join(OUTDIR, iso, "results")
+    os.makedirs(results_dir, exist_ok=True)
+
+    iso_sites = os.path.join(results_dir, "sites_evidence.tsv")
+    iso_trunc = os.path.join(results_dir, "erm41_truncation_metrics.tsv")
+    iso_blast = os.path.join(results_dir, "blast_top_hits.tsv")
+
+    write_filtered_tsv(sites_out, iso_sites, iso)
+    write_filtered_tsv(trunc_out, iso_trunc, iso)
+    write_filtered_tsv(blast_out, iso_blast, iso)
+
+    plot_src = os.path.join(PLOT_DIR, f"{iso}.erm41_coverage.png")
+    plot_dst = os.path.join(results_dir, "erm41_coverage.png")
+    if os.path.exists(plot_src):
+        shutil.copy2(plot_src, plot_dst)
+
+    try:
+        iso_wb = Workbook()
+
+        iso_ws1 = iso_wb.active
+        iso_ws1.title = "variants"
+        tsv_to_sheet(iso_ws1, iso_sites)
+
+        iso_ws2 = iso_wb.create_sheet("truncation")
+        tsv_to_sheet(iso_ws2, iso_trunc)
+
+        iso_ws3 = iso_wb.create_sheet("blast")
+        tsv_to_sheet(iso_ws3, iso_blast)
+
+        iso_ws4 = iso_wb.create_sheet("coverage")
+        add_coverage_sheet(iso_ws4, OUTDIR, [iso])
+
+        iso_excel = os.path.join(results_dir, "myco_prediction_summary.xlsx")
+        iso_wb.save(iso_excel)
+        print(f"Wrote: {iso_excel}")
+
+    except Exception as e:
+        print(
+            f"WARNING: Could not write isolate Excel summary "
+            f"({iso}): {e}"
+        )
+
+# -----------------------
 # Status concatenation (Step1 + Step2)
 # -----------------------
 concat_status_files(OUTDIR, isolates)
@@ -788,3 +848,4 @@ print(f"Wrote: {sites_out}")
 print(f"Wrote: {trunc_out}")
 print(f"Wrote: {os.path.join(OUTDIR, 'status', 'status_step1_all.tsv')}")
 print(f"Wrote: {os.path.join(OUTDIR, 'status', 'status_step2_all.tsv')}")
+

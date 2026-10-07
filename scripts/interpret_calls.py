@@ -1668,6 +1668,37 @@ def main():
                 + "\n"
             )
 
+            # Write the same final interpretation row to the
+            # isolate-specific results directory.
+            results_dir = os.path.join(
+                outdir,
+                iso,
+                "results",
+            )
+            os.makedirs(
+                results_dir,
+                exist_ok=True,
+            )
+
+            isolate_out_tsv = os.path.join(
+                results_dir,
+                "interpretation.tsv",
+            )
+
+            with open(
+                isolate_out_tsv,
+                "w",
+            ) as isolate_out:
+
+                isolate_out.write(
+                    "\t".join(header)
+                    + "\n"
+                )
+                isolate_out.write(
+                    "\t".join(row)
+                    + "\n"
+                )
+
     print(
         f"Wrote: {out_tsv}"
     )
@@ -1675,3 +1706,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

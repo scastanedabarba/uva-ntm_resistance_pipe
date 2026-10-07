@@ -147,10 +147,11 @@ echo -e "Isolate\tRun\tR1\tR2\tReadStatus\tStep1Job\tStep2Job" > "$STATUS_TSV"
 STEP1_SCRIPT="$WORKFLOW_DIR/01_assembly_blast.slurm"
 STEP2_SCRIPT="$WORKFLOW_DIR/02_map_call.slurm"
 STEP3_SCRIPT="$WORKFLOW_DIR/03_compile_and_interpret.slurm"
+PROVENANCE_HELPER="$SCRIPTS_DIR/provenance.sh"
 TARGETS_FASTA="$REF_DIR/nucleotide.fna"
 ERM39_REF_FASTA="$REF_DIR/ATCC35855.fasta"
 
-for f in "$STEP1_SCRIPT" "$STEP2_SCRIPT" "$STEP3_SCRIPT" "$TARGETS_FASTA" "$ERM39_REF_FASTA"; do
+for f in "$STEP1_SCRIPT" "$STEP2_SCRIPT" "$STEP3_SCRIPT" "$PROVENANCE_HELPER" "$TARGETS_FASTA" "$ERM39_REF_FASTA"; do
   [[ -f "$f" ]] || { echo "ERROR: Missing required file: $f" >&2; exit 1; }
 done
 
@@ -251,7 +252,7 @@ while IFS=$'\t' read -r ISOLATE RUN; do
   R2="${READDIR}/${ISOLATE}_R2.trim.fq.gz"
 
   ISO_OUT="$OUTDIR/$ISOLATE"
-  mkdir -p "$ISO_OUT"/{assembly,blast,mapping,variants,logs}
+  mkdir -p "$ISO_OUT"/{assembly,blast,mapping,variants,logs,.provenance}
 
   if [[ ! -s "$R1" || ! -s "$R2" ]]; then
     echo "WARNING: Missing PE reads for isolate '$ISOLATE' (run='${RUN}')." >&2
@@ -332,4 +333,5 @@ fi
 if [[ "$SAW_ONECOL" -eq 1 && -n "$READS_ROOT" ]]; then
   echo "Note: 1-column linelist detected; RUN defaulted to 'SIM' where missing."
 fi
+
 

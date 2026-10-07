@@ -49,6 +49,10 @@ ENV_CONFIG="$REPO_ROOT/config/setup_environment.sh"
 source "$ENV_CONFIG"
 setup_assembly_blast_env
 
+PROVENANCE_HELPER="$REPO_ROOT/scripts/provenance.sh"
+[[ -f "$PROVENANCE_HELPER" ]] || { echo "ERROR: Provenance helper not found: $PROVENANCE_HELPER" >&2; exit 1; }
+source "$PROVENANCE_HELPER"
+
 # ---------------------------
 # Outputs
 # ---------------------------
@@ -58,6 +62,15 @@ BLAST_DIR="${ISO_DIR}/blast"
 LOG_DIR="${ISO_DIR}/logs"
 
 mkdir -p "$ASM_DIR" "$BLAST_DIR" "$LOG_DIR"
+provenance_init "$ISO_DIR"
+PROV_DIR="$ISO_DIR/.provenance"
+COMMAND_LOG="$PROV_DIR/step1.commands.log"
+VERSION_LOG="$PROV_DIR/step1.versions.txt"
+: > "$COMMAND_LOG"
+: > "$VERSION_LOG"
+provenance_section "$COMMAND_LOG" "STEP 1 - Assembly and BLAST"
+provenance_version_line "$VERSION_LOG" "SPAdes" spades.py --version
+provenance_version_line "$VERSION_LOG" "BLAST+" blastn -version
 
 STATUS_TSV="${ISO_DIR}/status_step1.tsv"
 echo -e "Isolate\tStep\tStatus\tMessage" > "$STATUS_TSV"
@@ -117,6 +130,9 @@ fi
 SPADES_CMD+=(-t "$THREADS" -m "$SPADES_MEM_GB" -o "$ASM_DIR")
 # ---------------------------------------------------------------
 
+printf -v SPADES_LOG_CMD '%q ' "${SPADES_CMD[@]}"
+SPADES_LOG_CMD+=" > ${LOG_DIR}/spades.${ISOLATE}.out 2> ${LOG_DIR}/spades.${ISOLATE}.err"
+provenance_log "$COMMAND_LOG" "$SPADES_LOG_CMD"
 if "${SPADES_CMD[@]}" > "${LOG_DIR}/spades.${ISOLATE}.out" 2> "${LOG_DIR}/spades.${ISOLATE}.err"; then
   echo -e "${ISOLATE}\tSPADES\tOK\tAssembly completed" >> "$STATUS_TSV"
 else
@@ -138,6 +154,7 @@ echo "[$(date)] Running BLAST for $ISOLATE"
 
 DB_PREFIX="${BLAST_DIR}/contigs_db"
 
+provenance_log "$COMMAND_LOG" "makeblastdb -in $CONTIGS -dbtype nucl -out $DB_PREFIX > ${LOG_DIR}/makeblastdb.${ISOLATE}.out 2> ${LOG_DIR}/makeblastdb.${ISOLATE}.err"
 makeblastdb -in "$CONTIGS" -dbtype nucl -out "$DB_PREFIX" \
   > "${LOG_DIR}/makeblastdb.${ISOLATE}.out" 2> "${LOG_DIR}/makeblastdb.${ISOLATE}.err" || {
     echo -e "${ISOLATE}\tBLASTDB\tFAIL\tmakeblastdb failed (see logs)" >> "$STATUS_TSV"
@@ -149,6 +166,7 @@ FILTERED_TSV="${BLAST_DIR}/blast_filtered.tsv"
 
 # Columns:
 # qseqid sseqid pident length qlen slen qstart qend sstart send evalue bitscore qcovs
+provenance_log "$COMMAND_LOG" "blastn -query $TARGET_FASTA -db $DB_PREFIX -task blastn -max_target_seqs 50 -evalue 1e-10 -outfmt '6 qseqid sseqid pident length qlen slen qstart qend sstart send evalue bitscore qcovs' > $RAW_TSV 2> ${LOG_DIR}/blastn.${ISOLATE}.err"
 blastn -query "$TARGET_FASTA" -db "$DB_PREFIX" \
   -task blastn \
   -max_target_seqs 50 \
@@ -160,10 +178,12 @@ blastn -query "$TARGET_FASTA" -db "$DB_PREFIX" \
   }
 
 # Filter: pident >= 90 AND qcovs >= 90
+provenance_log "$COMMAND_LOG" "awk -v pid=$MIN_PID -v qcov=$MIN_QCOV 'BEGIN{FS=OFS=\"\t\"} (\$3+0)>=pid && (\$13+0)>=qcov {print}' $RAW_TSV > $FILTERED_TSV"
 awk -v pid="$MIN_PID" -v qcov="$MIN_QCOV" 'BEGIN{FS=OFS="\t"} ($3+0)>=pid && ($13+0)>=qcov {print}' \
   "$RAW_TSV" > "$FILTERED_TSV"
 
 echo -e "${ISOLATE}\tBLAST\tOK\tBLAST completed; filtered with pident>=${MIN_PID} and qcovs>=${MIN_QCOV}" >> "$STATUS_TSV"
 
 echo "[$(date)] Step 1 done for $ISOLATE"
+
 

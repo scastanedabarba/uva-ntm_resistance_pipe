@@ -45,6 +45,10 @@ source "$ENV_CONFIG"
 setup_mapping_env
 setup_python_env
 
+PROVENANCE_HELPER="$REPO_ROOT/scripts/provenance.sh"
+[[ -f "$PROVENANCE_HELPER" ]] || { echo "ERROR: Provenance helper not found: $PROVENANCE_HELPER" >&2; exit 1; }
+source "$PROVENANCE_HELPER"
+
 # ---------------------------
 # Reference
 # ---------------------------
@@ -80,6 +84,22 @@ LOG_DIR="${ISO_DIR}/logs"
 ERM39_MAP_DIR="${ISO_DIR}/erm39_mapping"
 
 mkdir -p "$MAP_DIR" "$VAR_DIR" "$CONS_DIR" "$LOG_DIR" "$ERM39_MAP_DIR"
+provenance_init "$ISO_DIR"
+PROV_DIR="$ISO_DIR/.provenance"
+COMMAND_LOG="$PROV_DIR/step2.commands.log"
+VERSION_LOG="$PROV_DIR/step2.versions.txt"
+: > "$COMMAND_LOG"
+: > "$VERSION_LOG"
+provenance_section "$COMMAND_LOG" "STEP 2 - Mapping, Variant Calling, Consensus, and erm39 Assessment"
+
+# BWA prints its version in the usage output rather than via --version
+BWA_VERSION="$(bwa 2>&1 | awk '/^Version:/{print $2; exit}' || true)"
+[[ -n "$BWA_VERSION" ]] || BWA_VERSION="UNAVAILABLE"
+printf 'BWA: %s\n' "$BWA_VERSION" >> "$VERSION_LOG"
+
+provenance_version_line "$VERSION_LOG" "SAMtools" samtools --version
+provenance_version_line "$VERSION_LOG" "BCFtools" bcftools --version
+provenance_version_line "$VERSION_LOG" "Python" "$NTM_PYTHON" --version
 
 STATUS_TSV="${ISO_DIR}/status_step2.tsv"
 echo -e "Isolate\tStep\tStatus\tMessage" > "$STATUS_TSV"
@@ -144,6 +164,8 @@ echo "[$(date)] Mapping $ISOLATE with bwa mem" >&2
 
 BAM="${MAP_DIR}/align.sorted.bam"
 
+provenance_log "$COMMAND_LOG" "bwa mem -t $THREADS $REF_FASTA $R1FASTQ $R2FASTQ 2> ${LOG_DIR}/bwa_mem.${ISOLATE}.err | samtools sort -@ $THREADS -o $BAM - 2> ${LOG_DIR}/samtools_sort.${ISOLATE}.err"
+
 if bwa mem -t "$THREADS" "$REF_FASTA" "$R1FASTQ" "$R2FASTQ" 2> "${LOG_DIR}/bwa_mem.${ISOLATE}.err" \
   | samtools sort -@ "$THREADS" -o "$BAM" - 2> "${LOG_DIR}/samtools_sort.${ISOLATE}.err"; then
   :
@@ -152,11 +174,13 @@ else
   exit 0
 fi
 
+provenance_log "$COMMAND_LOG" "samtools index $BAM 2> ${LOG_DIR}/samtools_index.${ISOLATE}.err"
 samtools index "$BAM" 2> "${LOG_DIR}/samtools_index.${ISOLATE}.err" || {
   echo -e "${ISOLATE}\tMAP\tFAIL\tsamtools index failed (see logs)" >> "$STATUS_TSV"
   exit 0
 }
 
+provenance_log "$COMMAND_LOG" "samtools flagstat $BAM > ${MAP_DIR}/flagstat.txt 2> ${LOG_DIR}/flagstat.${ISOLATE}.err"
 samtools flagstat "$BAM" > "${MAP_DIR}/flagstat.txt" 2> "${LOG_DIR}/flagstat.${ISOLATE}.err" || true
 echo -e "${ISOLATE}\tMAP\tOK\tMapping complete" >> "$STATUS_TSV"
 
@@ -166,6 +190,8 @@ echo -e "${ISOLATE}\tMAP\tOK\tMapping complete" >> "$STATUS_TSV"
 echo "[$(date)] Calling variants in target genes for $ISOLATE" >&2
 
 VCF_GZ="${VAR_DIR}/targets.vcf.gz"
+
+provenance_log "$COMMAND_LOG" "bcftools mpileup -f $REF_FASTA -R $BED -q 20 -Q 20 -a DP,AD -Ou $BAM 2> ${LOG_DIR}/mpileup.${ISOLATE}.err | bcftools call -mv -Oz -o $VCF_GZ 2> ${LOG_DIR}/call.${ISOLATE}.err"
 
 if bcftools mpileup \
     -f "$REF_FASTA" \
@@ -181,15 +207,18 @@ else
   exit 0
 fi
 
+provenance_log "$COMMAND_LOG" "bcftools index -t $VCF_GZ 2> ${LOG_DIR}/bcftools_index.${ISOLATE}.err"
 bcftools index -t "$VCF_GZ" 2> "${LOG_DIR}/bcftools_index.${ISOLATE}.err" || {
   echo -e "${ISOLATE}\tVCF\tFAIL\tbcftools index failed (see logs)" >> "$STATUS_TSV"
   exit 0
 }
 
 DEPTH_TSV="${VAR_DIR}/targets_depth.tsv"
+provenance_log "$COMMAND_LOG" "samtools depth -aa -b $BED $BAM > $DEPTH_TSV 2> ${LOG_DIR}/depth.${ISOLATE}.err"
 samtools depth -aa -b "$BED" "$BAM" > "$DEPTH_TSV" 2> "${LOG_DIR}/depth.${ISOLATE}.err" || true
 
 RAW_VAR_TSV="${VAR_DIR}/targets_variants.tsv"
+provenance_log "$COMMAND_LOG" "bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\t%QUAL\t[%DP]\t[%AD]\n' $VCF_GZ | awk -v iso='$ISOLATE' -v rrs_s='$RRS_START' -v rrs_e='$RRS_END' -v rrl_s='$RRL_START' -v rrl_e='$RRL_END' -v erm_s='$ERM41_START' -v erm_e='$ERM41_END' 'BEGIN{FS=OFS=\"\t\"; print \"Isolate\",\"Gene\",\"CHROM\",\"POS_ref\",\"POS_gene\",\"REF\",\"ALT\",\"QUAL\",\"DP\",\"AD\"} {chrom=\$1; pos=\$2; ref=\$3; alt=\$4; qual=\$5; dp=\$6; ad=\$7; gene=\"NA\"; gpos=\"NA\"; if (pos>=rrs_s && pos<=rrs_e) {gene=\"rrs\"; gpos=pos-rrs_s+1} else if (pos>=rrl_s && pos<=rrl_e) {gene=\"rrl\"; gpos=pos-rrl_s+1} else if (pos>=erm_s && pos<=erm_e) {gene=\"erm41\"; gpos=pos-erm_s+1} print iso,gene,chrom,pos,gpos,ref,alt,qual,dp,ad}' > $RAW_VAR_TSV"
 bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\t%QUAL\t[%DP]\t[%AD]\n' "$VCF_GZ" \
   | awk -v iso="$ISOLATE" \
         -v rrs_s="$RRS_START" -v rrs_e="$RRS_END" \
@@ -220,6 +249,7 @@ write_consensus() {
   local region="${REF_CONTIG}:${start}-${end}"
 
   # Extract region FASTA, apply variants, rewrite header
+  provenance_log "$COMMAND_LOG" "samtools faidx $REF_FASTA $region 2> ${LOG_DIR}/faidx_region.${ISOLATE}.${gene}.err | bcftools consensus -f - $VCF_GZ 2> ${LOG_DIR}/consensus.${ISOLATE}.${gene}.err | awk -v h='>${ISOLATE}|${gene}|${region}' 'BEGIN{printed=0} /^>/{print h; printed=1; next} {print} END{if(!printed){print h}}' > $out_fa"
   if samtools faidx "$REF_FASTA" "$region" 2> "${LOG_DIR}/faidx_region.${ISOLATE}.${gene}.err" \
     | bcftools consensus -f - "$VCF_GZ" 2> "${LOG_DIR}/consensus.${ISOLATE}.${gene}.err" \
     | awk -v h=">${ISOLATE}|${gene}|${region}" 'BEGIN{printed=0}
@@ -263,6 +293,8 @@ ERM39_SITE_TSV="${VAR_DIR}/erm39_site.tsv"
 
 rm -f "$ERM39_SITE_TSV"
 
+provenance_log "$COMMAND_LOG" "bwa mem -t $THREADS $ERM39_REF_FASTA $R1FASTQ $R2FASTQ 2> ${LOG_DIR}/bwa_mem_erm39.${ISOLATE}.err | samtools sort -@ $THREADS -o $ERM39_BAM - 2> ${LOG_DIR}/samtools_sort_erm39.${ISOLATE}.err"
+
 if bwa mem -t "$THREADS" "$ERM39_REF_FASTA" "$R1FASTQ" "$R2FASTQ" \
   2> "${LOG_DIR}/bwa_mem_erm39.${ISOLATE}.err" \
   | samtools sort -@ "$THREADS" -o "$ERM39_BAM" - \
@@ -274,12 +306,14 @@ else
   exit 0
 fi
 
+provenance_log "$COMMAND_LOG" "samtools index $ERM39_BAM 2> ${LOG_DIR}/samtools_index_erm39.${ISOLATE}.err"
 samtools index "$ERM39_BAM" 2> "${LOG_DIR}/samtools_index_erm39.${ISOLATE}.err" || {
   echo -e "${ISOLATE}\tERM39_MAP\tFAIL\tsamtools index failed (see logs)" >> "$STATUS_TSV"
   echo "[$(date)] Step 2 done for $ISOLATE" >&2
   exit 0
 }
 
+provenance_log "$COMMAND_LOG" "samtools depth -aa -r ${ERM39_CONTIG}:${ERM39_START}-${ERM39_END} $ERM39_BAM > $ERM39_DEPTH 2> ${LOG_DIR}/depth_erm39.${ISOLATE}.err"
 samtools depth \
   -aa \
   -r "${ERM39_CONTIG}:${ERM39_START}-${ERM39_END}" \
@@ -288,6 +322,7 @@ samtools depth \
   2> "${LOG_DIR}/depth_erm39.${ISOLATE}.err" \
   || true
 
+provenance_log "$COMMAND_LOG" "samtools mpileup -f $ERM39_REF_FASTA -r ${ERM39_CONTIG}:${ERM39_POS}-${ERM39_POS} $ERM39_BAM > $ERM39_PILEUP 2> ${LOG_DIR}/mpileup_erm39.${ISOLATE}.err"
 samtools mpileup \
   -f "$ERM39_REF_FASTA" \
   -r "${ERM39_CONTIG}:${ERM39_POS}-${ERM39_POS}" \
@@ -296,6 +331,7 @@ samtools mpileup \
   2> "${LOG_DIR}/mpileup_erm39.${ISOLATE}.err" \
   || true
 
+provenance_log "$COMMAND_LOG" "$NTM_PYTHON - $ISOLATE $ERM39_DEPTH $ERM39_PILEUP $ERM39_METRICS $ERM39_SITE_TSV $ERM39_LENGTH $ERM39_GENE_MIN_DEPTH $ERM39_GENE_MIN_PCT $ERM39_SITE_MIN_DEPTH <<'PYERM39'"
 "$NTM_PYTHON" - \
   "$ISOLATE" \
   "$ERM39_DEPTH" \
@@ -430,4 +466,5 @@ PYERM39
 echo -e "${ISOLATE}\tERM39_MAP\tOK\term39 mapping assessment complete" >> "$STATUS_TSV"
 
 echo "[$(date)] Step 2 done for $ISOLATE" >&2
+
 
